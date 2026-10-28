@@ -150,6 +150,20 @@ class PaperTraderCoreTests(unittest.TestCase):
         self.assertAlmostEqual(short_trade["exit_price"], expected_short_exit)
         self.assertAlmostEqual(short_trade["pnl"], expected_short_pnl)
 
+    def test_buy_hold_benchmark_includes_round_trip_costs(self):
+        frame = pd.DataFrame([
+            {"ts": 0, "open": 100.0, "close": 105.0},
+            {"ts": 10, "open": 105.0, "close": 110.0},
+        ])
+        data = {"BTC/USDT": (frame, [], {})}
+        result = pt._buy_hold(data, 0, 20, self.cfg)
+        entry = 100.0 * (1 + self.cfg.slippage)
+        exit_ = 110.0 * (1 - self.cfg.slippage)
+        qty = 1.0 / (entry * (1 + self.cfg.fee))
+        expected = qty * exit_ * (1 - self.cfg.fee) - 1.0
+        self.assertAlmostEqual(result, expected)
+        self.assertLess(result, 0.10)  # raw 10% price return ignores all costs
+
     def test_compute_stats_uses_mark_to_market_curve_for_drawdown(self):
         trades = pd.DataFrame([
             {"exit_ts": 1, "pnl": 10.0, "r_multiple": 1.0},
