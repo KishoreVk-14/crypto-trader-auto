@@ -111,6 +111,17 @@ class PaperTraderCoreTests(unittest.TestCase):
         self.assertAlmostEqual(short_trade["exit_price"], expected_short_exit)
         self.assertAlmostEqual(short_trade["pnl"], expected_short_pnl)
 
+    def test_compute_stats_uses_mark_to_market_curve_for_drawdown(self):
+        trades = pd.DataFrame([
+            {"exit_ts": 1, "pnl": 10.0, "r_multiple": 1.0},
+            {"exit_ts": 2, "pnl": -5.0, "r_multiple": -0.5},
+        ])
+        stats = pt.compute_stats(
+            trades, 1000.0,
+            mark_to_market_curve=[1000.0, 1200.0, 800.0, 900.0],
+        )
+        self.assertAlmostEqual(stats["max_dd"], -1.0 / 3.0)
+
     def test_compute_stats_reports_net_pnl_and_drawdown(self):
         trades = pd.DataFrame([
             {"exit_ts": 1, "pnl": 10.0, "r_multiple": 1.0},
