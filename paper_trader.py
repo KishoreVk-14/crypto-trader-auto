@@ -732,23 +732,11 @@ def portfolio_backtest(cfg: Config, frames: dict[str, pd.DataFrame]):
                 keep.append(tr)
         open_ = keep
 
-        # Mark each strategy's equity to the candle close, including unrealized P&L
-        # and estimated liquidation costs for positions that remain open.
+        # Keep the latest completed close for symbols with no candle at this timestamp.
         for sym, (_, recs, pos) in data.items():
             idx = pos.get(t)
             if idx is not None:
                 last_close_by_symbol[sym] = float(recs[idx].close)
-        for name in STRATEGIES:
-            unrealized = 0.0
-            for tr in open_:
-                if tr["strategy"] != name or tr["symbol"] not in last_close_by_symbol:
-                    continue
-                close_px = last_close_by_symbol[tr["symbol"]]
-                exit_px = close_px * ((1 - cfg.slippage) if tr["side"] == "LONG" else (1 + cfg.slippage))
-                gross = ((exit_px - tr["entry_price"]) * tr["qty"] if tr["side"] == "LONG"
-                         else (tr["entry_price"] - exit_px) * tr["qty"])
-                unrealized += gross - tr["entry_fee"] - exit_px * tr["qty"] * cfg.fee
-            equity_curves[name].append((now_t, cfg.start_equity + realized[name] + unrealized))
 
         # 2) Scan for new entries filling at candle `t + tf` open (`recs[i + 1].open`)
         for sym, (d, recs, pos) in data.items():
@@ -783,6 +771,24 @@ def portfolio_backtest(cfg: Config, frames: dict[str, pd.DataFrame]):
                     "max_hold": cfg.max_bars * 2 if name == "trend" else cfg.max_bars,
                     "bars_held": 0,
                 })
+
+        # Record equity after next-open entries are added. Newly opened positions
+        # are marked from their fill price at this timestamp, so their entry fee
+        # and estimated liquidation costs are visible immediately.
+        for name in STRATEGIES:
+            unrealized = 0.0
+            for tr in open_:
+                if tr["strategy"] != name:
+                    continue
+                mark_px = (tr["entry_price"] if tr["entry_ts"] == now_t
+                           else last_close_by_symbol.get(tr["symbol"]))
+                if mark_px is None:
+                    continue
+                exit_px = mark_px * ((1 - cfg.slippage) if tr["side"] == "LONG" else (1 + cfg.slippage))
+                gross = ((exit_px - tr["entry_price"]) * tr["qty"] if tr["side"] == "LONG"
+                         else (tr["entry_price"] - exit_px) * tr["qty"])
+                unrealized += gross - tr["entry_fee"] - exit_px * tr["qty"] * cfg.fee
+            equity_curves[name].append((now_t, cfg.start_equity + realized[name] + unrealized))
 
     # Do not silently omit positions that remain open when the historical data ends.
     for tr in open_:
