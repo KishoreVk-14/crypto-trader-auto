@@ -49,8 +49,8 @@ class PaperTraderCoreTests(unittest.TestCase):
 
         con = pt.connect(":memory:")
         try:
-            with patch.object(pt, "fetch_candles", return_value=raw), \\
-                 patch.object(pt, "now_ms", return_value=ts[265] + 1), \\
+            with patch.object(pt, "fetch_candles", return_value=raw), \
+                 patch.object(pt, "now_ms", return_value=ts[265] + 1), \
                  patch.dict(pt.STRATEGIES, {"pullback": one_signal}, clear=True):
                 summary = pt.run_once(self.cfg, con, SimpleNamespace())
 
@@ -78,8 +78,8 @@ class PaperTraderCoreTests(unittest.TestCase):
 
         con = pt.connect(":memory:")
         try:
-            with patch.object(pt, "fetch_candles", return_value=raw), \\
-                 patch.object(pt, "now_ms", return_value=ts[264] + tf), \\
+            with patch.object(pt, "fetch_candles", return_value=raw), \
+                 patch.object(pt, "now_ms", return_value=ts[264] + tf), \
                  patch.dict(pt.STRATEGIES, {"pullback": one_signal}, clear=True):
                 summary = pt.run_once(self.cfg, con, SimpleNamespace())
 
