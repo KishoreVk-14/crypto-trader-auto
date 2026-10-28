@@ -84,6 +84,33 @@ class PaperTraderCoreTests(unittest.TestCase):
                                   candles, self.cfg, "pullback")
         self.assertIsNone(result)
 
+    def test_open_backtest_trade_is_liquidated_at_end_with_costs(self):
+        long_trade = {
+            "side": "LONG", "entry_price": 100.0, "qty": 2.0,
+            "entry_fee": 0.2, "risk_amt": 10.0, "cur_stop": 95.0,
+            "init_risk": 5.0, "fee_buffer": 0.25, "max_hold": 3,
+        }
+        pt._force_close_at_end(long_trade, SimpleNamespace(close=105.0), 1234, self.cfg)
+        expected_long_exit = 105.0 * (1 - self.cfg.slippage)
+        expected_long_pnl = (expected_long_exit - 100.0) * 2.0 - 0.2 - expected_long_exit * 2.0 * self.cfg.fee
+        self.assertEqual(long_trade["exit_reason"], "END_OF_DATA")
+        self.assertEqual(long_trade["exit_ts"], 1234)
+        self.assertAlmostEqual(long_trade["exit_price"], expected_long_exit)
+        self.assertAlmostEqual(long_trade["pnl"], expected_long_pnl)
+        self.assertNotIn("entry_fee", long_trade)
+
+        short_trade = {
+            "side": "SHORT", "entry_price": 100.0, "qty": 2.0,
+            "entry_fee": 0.2, "risk_amt": 10.0, "cur_stop": 105.0,
+            "init_risk": 5.0, "fee_buffer": 0.25, "max_hold": 3,
+        }
+        pt._force_close_at_end(short_trade, SimpleNamespace(close=95.0), 5678, self.cfg)
+        expected_short_exit = 95.0 * (1 + self.cfg.slippage)
+        expected_short_pnl = (100.0 - expected_short_exit) * 2.0 - 0.2 - expected_short_exit * 2.0 * self.cfg.fee
+        self.assertEqual(short_trade["exit_reason"], "END_OF_DATA")
+        self.assertAlmostEqual(short_trade["exit_price"], expected_short_exit)
+        self.assertAlmostEqual(short_trade["pnl"], expected_short_pnl)
+
     def test_compute_stats_reports_net_pnl_and_drawdown(self):
         trades = pd.DataFrame([
             {"exit_ts": 1, "pnl": 10.0, "r_multiple": 1.0},
