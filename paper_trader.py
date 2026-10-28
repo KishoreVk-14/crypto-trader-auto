@@ -863,8 +863,11 @@ def run_backtest(cfg: Config, ex) -> dict:
 def compute_stats(df: pd.DataFrame, start_equity: float, mark_to_market_curve: list[float] | None = None) -> dict:
     n = len(df)
     if n == 0:
+        dd_curve = np.asarray(mark_to_market_curve, dtype=float) if mark_to_market_curve else np.asarray([start_equity])
+        peak = np.maximum.accumulate(dd_curve)
+        max_dd = float(((dd_curve - peak) / peak).min()) if len(dd_curve) else 0.0
         return {"trades": 0, "wins": 0, "losses": 0, "win_rate": 0.0, "profit_factor": 0.0,
-                "expectancy_r": 0.0, "total_pnl": 0.0, "return_pct": 0.0, "max_dd": 0.0,
+                "expectancy_r": 0.0, "total_pnl": 0.0, "return_pct": 0.0, "max_dd": max_dd,
                 "avg_win": 0.0, "avg_loss": 0.0, "curve": [start_equity]}
     df = df.sort_values("exit_ts")
     wins, losses = df[df["pnl"] > 0], df[df["pnl"] <= 0]
