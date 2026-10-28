@@ -21,6 +21,17 @@ class PaperTraderCoreTests(unittest.TestCase):
             min_notional=10.0,
         )
 
+    def test_next_candle_open_requires_exact_next_timestamp(self):
+        tf = pt.TF_MS["4h"]
+        raw = pd.DataFrame([
+            {"ts": 1000, "open": 100.0},
+            {"ts": 1000 + tf, "open": 101.0},
+            {"ts": 1000 + 3 * tf, "open": 103.0},
+        ])
+        self.assertEqual(pt.next_candle_open(raw, 1000, "4h"), 101.0)
+        self.assertIsNone(pt.next_candle_open(raw, 1000 + tf, "4h"))
+        self.assertIsNone(pt.next_candle_open(raw.iloc[:1], 1000, "4h"))
+
     def test_gap_checks_reject_invalid_long_and_short_entries(self):
         self.assertTrue(pt.gapped("LONG", 94.0, 95.0, 110.0))
         self.assertTrue(pt.gapped("LONG", 111.0, 95.0, 110.0))
