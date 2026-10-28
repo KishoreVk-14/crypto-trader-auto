@@ -700,6 +700,9 @@ def portfolio_backtest(cfg: Config, frames: dict[str, pd.DataFrame]):
     times = sorted({int(t) for d, _, _ in data.values() for t in d["ts"] if t >= trade_from})
     realized = {k: 0.0 for k in STRATEGIES}
     equity_curves = {k: [(trade_from, cfg.start_equity)] for k in STRATEGIES}
+    # Keep the latest observed close per symbol so missing candles do not
+    # temporarily erase an open position from the portfolio equity estimate.
+    last_close_by_symbol = {}
     open_, done = [], []
 
     for t in times:
@@ -718,16 +721,16 @@ def portfolio_backtest(cfg: Config, frames: dict[str, pd.DataFrame]):
 
         # Mark each strategy's equity to the candle close, including unrealized P&L
         # and estimated liquidation costs for positions that remain open.
-        close_by_symbol = {
-            sym: float(recs[pos[t]].close)
-            for sym, (_, recs, pos) in data.items() if t in pos
-        }
+        for sym, (_, recs, pos) in data.items():
+            idx = pos.get(t)
+            if idx is not None:
+                last_close_by_symbol[sym] = float(recs[idx].close)
         for name in STRATEGIES:
             unrealized = 0.0
             for tr in open_:
-                if tr["strategy"] != name or tr["symbol"] not in close_by_symbol:
+                if tr["strategy"] != name or tr["symbol"] not in last_close_by_symbol:
                     continue
-                close_px = close_by_symbol[tr["symbol"]]
+                close_px = last_close_by_symbol[tr["symbol"]]
                 exit_px = close_px * ((1 - cfg.slippage) if tr["side"] == "LONG" else (1 + cfg.slippage))
                 gross = ((exit_px - tr["entry_price"]) * tr["qty"] if tr["side"] == "LONG"
                          else (tr["entry_price"] - exit_px) * tr["qty"])
