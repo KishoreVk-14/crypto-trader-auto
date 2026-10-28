@@ -255,7 +255,18 @@ class PaperTraderCoreTests(unittest.TestCase):
             first = int(frames["BTC/USDT"]["ts"].iloc[210])
             end = int(frames["BTC/USDT"]["ts"].iloc[-1]) + tf
             curves = {name: [(first, 1000.0), (end, 1005.0)] for name in pt.STRATEGIES}
-            return [], {
+            trades = [
+                # A simulated warmup trade must not leak into evaluation stats.
+                {"strategy": "short_pullback", "entry_ts": first - tf,
+                 "exit_ts": first, "pnl": 50.0, "r_multiple": 5.0},
+                # This trade belongs to the evaluation fold.
+                {"strategy": "short_pullback", "entry_ts": first + tf,
+                 "exit_ts": first + 2 * tf, "pnl": 5.0, "r_multiple": 0.5},
+                # A trade outside the fold must not be attributed to it.
+                {"strategy": "short_pullback", "entry_ts": end + tf,
+                 "exit_ts": end + 2 * tf, "pnl": 100.0, "r_multiple": 10.0},
+            ]
+            return trades, {
                 "trade_from": first,
                 "end": end,
                 "equity_curves": curves,
@@ -275,7 +286,9 @@ class PaperTraderCoreTests(unittest.TestCase):
         self.assertGreaterEqual(len(result["folds"]), 2)
         for fold in result["folds"]:
             self.assertIn("short_pullback", fold["strategies"])
-            self.assertEqual(fold["strategies"]["short_pullback"]["trades"], 0)
+            stats = fold["strategies"]["short_pullback"]
+            self.assertEqual(stats["trades"], 1)
+            self.assertAlmostEqual(stats["return_pct"], 0.005)
 
 if __name__ == "__main__":
     unittest.main()
