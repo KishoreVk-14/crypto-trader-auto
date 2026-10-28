@@ -75,6 +75,33 @@ class PaperTraderCoreTests(unittest.TestCase):
         self.assertEqual(short_result["exit_reason"], "TARGET")
         self.assertAlmostEqual(short_result["exit_price"], 90.0 * (1 + self.cfg.slippage))
 
+    def test_backtest_step_applies_target_slippage_for_long_and_short(self):
+        long_trade = {
+            "side": "LONG", "entry_price": 100.0, "stop": 90.0, "cur_stop": 90.0,
+            "target": 110.0, "qty": 1.0, "entry_fee": 0.1, "risk_amt": 10.0,
+            "init_risk": 10.0, "fee_buffer": 0.25, "max_hold": 3, "bars_held": 0,
+            "strategy": "pullback",
+        }
+        long_row = SimpleNamespace(
+            ts=0, open=100.0, high=111.0, low=99.0, close=110.0, ll20=math.nan,
+        )
+        self.assertTrue(pt._step_open_trade(long_trade, long_row, 14400000, self.cfg))
+        self.assertEqual(long_trade["exit_reason"], "TARGET")
+        self.assertAlmostEqual(long_trade["exit_price"], 110.0 * (1 - self.cfg.slippage))
+
+        short_trade = {
+            "side": "SHORT", "entry_price": 100.0, "stop": 110.0, "cur_stop": 110.0,
+            "target": 90.0, "qty": 1.0, "entry_fee": 0.1, "risk_amt": 10.0,
+            "init_risk": 10.0, "fee_buffer": 0.25, "max_hold": 3, "bars_held": 0,
+            "strategy": "short_pullback",
+        }
+        short_row = SimpleNamespace(
+            ts=0, open=100.0, high=101.0, low=89.0, close=90.0, ll20=math.nan,
+        )
+        self.assertTrue(pt._step_open_trade(short_trade, short_row, 14400000, self.cfg))
+        self.assertEqual(short_trade["exit_reason"], "TARGET")
+        self.assertAlmostEqual(short_trade["exit_price"], 90.0 * (1 + self.cfg.slippage))
+
     def test_no_exit_before_time_limit_when_bar_does_not_touch_levels(self):
         candles = pd.DataFrame([{
             "ts": 0, "open": 100.0, "high": 102.0, "low": 98.0,
