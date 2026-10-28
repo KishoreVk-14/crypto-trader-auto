@@ -1,0 +1,64 @@
+name: Paper trader validation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      run_backtest:
+        description: "Run the network-dependent historical backtest"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: paper-trader-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Compile Python
+        run: python -m py_compile paper_trader.py
+
+      - name: Check CLI help
+        run: python paper_trader.py --help
+
+      - name: Run historical backtest (manual only)
+        if: github.event_name == 'workflow_dispatch' && inputs.run_backtest
+        env:
+          BACKTEST_DAYS: "730"
+          DB_PATH: "outputs/ci_trades.db"
+          REPORT_PATH: "outputs/index.html"
+          BACKTEST_PATH: "outputs/backtest.json"
+        run: |
+          mkdir -p outputs
+          python paper_trader.py backtest 2>&1 | tee outputs/backtest.log
+
+      - name: Upload backtest report
+        if: always() && github.event_name == 'workflow_dispatch' && inputs.run_backtest
+        uses: actions/upload-artifact@v4
+        with:
+          name: paper-trader-backtest-${{ github.run_number }}
+          path: outputs/
+          if-no-files-found: warn
+          retention-days: 14
