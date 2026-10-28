@@ -456,9 +456,9 @@ def simulate_exit(side, entry_price, stop, target, qty, entry_fee, risk_amt, can
         elif not long and row.high >= cur_stop:
             exit_px, reason = max(cur_stop, row.open) * (1 + cfg.slippage), "STOP"
         elif long and row.high >= target:
-            exit_px, reason = max(target, row.open), "TARGET"
+            exit_px, reason = max(target, row.open) * (1 - cfg.slippage), "TARGET"
         elif not long and row.low <= target:
-            exit_px, reason = min(target, row.open), "TARGET"
+            exit_px, reason = min(target, row.open) * (1 + cfg.slippage), "TARGET"
         elif bars >= max_hold:
             exit_px, reason = row.close * ((1 - cfg.slippage) if long else (1 + cfg.slippage)), "TIME"
         else:
@@ -638,9 +638,9 @@ def _step_open_trade(tr: dict, row, close_ts: int, cfg: Config) -> bool:
     elif not long and row.high >= cur_stop:
         exit_px, reason = max(cur_stop, row.open) * (1 + cfg.slippage), "STOP"
     elif long and row.high >= target:
-        exit_px, reason = max(target, row.open), "TARGET"
+        exit_px, reason = max(target, row.open) * (1 - cfg.slippage), "TARGET"
     elif not long and row.low <= target:
-        exit_px, reason = min(target, row.open), "TARGET"
+        exit_px, reason = min(target, row.open) * (1 + cfg.slippage), "TARGET"
     elif tr["bars_held"] >= tr["max_hold"]:
         exit_px, reason = row.close * ((1 - cfg.slippage) if long else (1 + cfg.slippage)), "TIME"
     else:
