@@ -398,18 +398,31 @@ def entry_fill(side: str, o: float, cfg: Config) -> float:
 
 
 def size_position(cfg: Config, equity: float, open_notional_: float, fill: float, stop: float, side: str = "LONG"):
-    """Shared by live and backtest: risk-based size, capped per position and by free equity."""
-    per_unit_risk = (fill - stop) if side == "LONG" else (stop - fill)
-    if per_unit_risk <= 0 or equity <= 0:
+    """Size to estimated stop-loss risk including entry/exit fees and adverse slippage."""
+    long = side == "LONG"
+    price_risk = (fill - stop) if long else (stop - fill)
+    if price_risk <= 0 or equity <= 0:
         return None
-    qty = equity * cfg.risk_pct / per_unit_risk
+
+    # Estimate a stop fill with adverse slippage, then include fees on both sides.
+    stop_fill = stop * ((1 - cfg.slippage) if long else (1 + cfg.slippage))
+    price_loss_per_unit = (fill - stop_fill) if long else (stop_fill - fill)
+    entry_fee_per_unit = fill * cfg.fee
+    exit_fee_per_unit = stop_fill * cfg.fee
+    estimated_loss_per_unit = price_loss_per_unit + entry_fee_per_unit + exit_fee_per_unit
+    if estimated_loss_per_unit <= 0:
+        return None
+
+    qty = equity * cfg.risk_pct / estimated_loss_per_unit
     cap = min(cfg.max_pos_pct * equity, equity - open_notional_)
+    if cap <= 0:
+        return None
     if qty * fill > cap:
         qty = cap / fill
     notional = qty * fill
     if notional < cfg.min_notional:
         return None
-    return qty, notional, qty * per_unit_risk
+    return qty, notional, qty * estimated_loss_per_unit
 
 
 def open_position(con, cfg: Config, sig: Signal, next_open: float) -> sqlite3.Row | None:
