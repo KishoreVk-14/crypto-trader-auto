@@ -699,6 +699,7 @@ def portfolio_backtest(cfg: Config, frames: dict[str, pd.DataFrame]):
     trade_from = max(int(d["ts"].iloc[210]) for d, _, _ in data.values())
     times = sorted({int(t) for d, _, _ in data.values() for t in d["ts"] if t >= trade_from})
     realized = {k: 0.0 for k in STRATEGIES}
+    equity_curves = {k: [(trade_from, cfg.start_equity)] for k in STRATEGIES}
     open_, done = [], []
 
     for t in times:
@@ -748,6 +749,25 @@ def portfolio_backtest(cfg: Config, frames: dict[str, pd.DataFrame]):
                     "max_hold": cfg.max_bars * 2 if name == "trend" else cfg.max_bars,
                     "bars_held": 0,
                 })
+
+        # Mark each strategy's equity to the candle close, including unrealized P&L
+        # and estimated liquidation costs for positions that remain open.
+        close_by_symbol = {
+            sym: float(recs[pos[t]].close)
+            for sym, (_, recs, pos) in data.items() if t in pos
+        }
+        for name in STRATEGIES:
+            unrealized = 0.0
+            for tr in open_:
+                if tr["strategy"] != name or tr["symbol"] not in close_by_symbol:
+                    continue
+                close_px = close_by_symbol[tr["symbol"]]
+                exit_px = close_px * ((1 - cfg.slippage) if tr["side"] == "LONG" else (1 + cfg.slippage))
+                gross = ((exit_px - tr["entry_price"]) * tr["qty"] if tr["side"] == "LONG"
+                         else (tr["entry_price"] - exit_px) * tr["qty"])
+                unrealized += gross - tr["entry_fee"] - exit_px * tr["qty"] * cfg.fee
+            equity_curves[name].append((now_t, cfg.start_equity + realized[name] + unrealized))
+
     # Do not silently omit positions that remain open when the historical data ends.
     for tr in open_:
         _, recs, _ = data[tr["symbol"]]
@@ -756,7 +776,11 @@ def portfolio_backtest(cfg: Config, frames: dict[str, pd.DataFrame]):
         realized[tr["strategy"]] += tr["pnl"]
         done.append(tr)
 
-    return done, {"data": data, "trade_from": trade_from, "end": int(max(d["ts"].iloc[-1] for d, _, _ in data.values())) + tf}
+    end_ts = int(max(d["ts"].iloc[-1] for d, _, _ in data.values())) + tf
+    for name in STRATEGIES:
+        equity_curves[name].append((end_ts, cfg.start_equity + realized[name]))
+
+    return done, {"data": data, "trade_from": trade_from, "end": end_ts, "equity_curves": equity_curves}
 
 
 def _buy_hold(data: dict, t0: int, t1: int) -> float:
@@ -815,7 +839,16 @@ def run_backtest(cfg: Config, ex) -> dict:
             mine = [t for t in trades if t["strategy"] == name]
             sets = {"all": mine, "early": [t for t in mine if t["entry_ts"] < split],
                     "late": [t for t in mine if t["entry_ts"] >= split]}
-            sts = {k: compute_stats(pd.DataFrame(v), cfg.start_equity) for k, v in sets.items()}
+            curve_points = meta["equity_curves"][name]
+            curve_sets = {
+                "all": [value for _, value in curve_points],
+                "early": [value for ts, value in curve_points if ts < split],
+                "late": [value for ts, value in curve_points if ts >= split],
+            }
+            sts = {
+                k: compute_stats(pd.DataFrame(v), cfg.start_equity, mark_to_market_curve=curve_sets[k])
+                for k, v in sets.items()
+            }
             res["strategies"][name] = {k: _clean(v) for k, v in sts.items()}
             res["strategies"][name]["curve"] = [float(x) for x in sts["all"]["curve"]]
             res["strategies"][name]["trades"] = sorted(mine, key=lambda x: x["exit_ts"], reverse=True)[:100]
@@ -827,7 +860,7 @@ def run_backtest(cfg: Config, ex) -> dict:
 # --------------------------------------------------------------------------- #
 # Statistics and dashboard
 # --------------------------------------------------------------------------- #
-def compute_stats(df: pd.DataFrame, start_equity: float) -> dict:
+def compute_stats(df: pd.DataFrame, start_equity: float, mark_to_market_curve: list[float] | None = None) -> dict:
     n = len(df)
     if n == 0:
         return {"trades": 0, "wins": 0, "losses": 0, "win_rate": 0.0, "profit_factor": 0.0,
@@ -838,12 +871,15 @@ def compute_stats(df: pd.DataFrame, start_equity: float) -> dict:
     gross_win, gross_loss = wins["pnl"].sum(), -losses["pnl"].sum()
     pf = gross_win / gross_loss if gross_loss > 0 else (float("inf") if gross_win > 0 else 0.0)
     curve = np.concatenate([[start_equity], start_equity + df["pnl"].cumsum().to_numpy()])
-    peak = np.maximum.accumulate(curve)
+    # Use candle-by-candle liquidation equity when supplied; otherwise fall back
+    # to the realized closed-trade curve for standalone callers/tests.
+    dd_curve = np.asarray(mark_to_market_curve, dtype=float) if mark_to_market_curve else curve
+    peak = np.maximum.accumulate(dd_curve)
     return {
         "trades": n, "wins": len(wins), "losses": len(losses), "win_rate": len(wins) / n,
         "profit_factor": pf, "expectancy_r": float(df["r_multiple"].mean()),
         "total_pnl": float(df["pnl"].sum()), "return_pct": float(df["pnl"].sum() / start_equity),
-        "max_dd": float(((curve - peak) / peak).min()),
+        "max_dd": float(((dd_curve - peak) / peak).min()),
         "avg_win": float(wins["pnl"].mean()) if len(wins) else 0.0,
         "avg_loss": float(losses["pnl"].mean()) if len(losses) else 0.0,
         "curve": curve.tolist(),
