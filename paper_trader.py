@@ -1016,7 +1016,7 @@ def _svg_curves(curves: dict, start: float) -> str:
         for k, c in curves.items())
     legend = " &nbsp; ".join(f'<span style="color:{_COLORS.get(k, "#888")}">&#9679;</span> {_nice(k)}' for k in curves)
     return (f'<svg viewBox="0 0 {w} {h}" role="img" aria-label="Equity curves">{grid}{base}{lines}</svg>'
-            f'<div class="legend">{legend} &nbsp; <span class="mut">x-axis: closed trades, dashed line: starting balance</span></div>')
+            f'<div class="legend">{legend} &nbsp; <span class="mut">x-axis: candle timestamps (spacing is index-based), dashed line: starting balance</span></div>')
 
 
 def _scan_row(name, r) -> str:
