@@ -538,6 +538,13 @@ def save_scan(con, name, symbol, scan: Scan, status, price, candle_ts) -> None:
     )
 
 
+def next_candle_open(raw: pd.DataFrame, candle_ts: int, timeframe: str) -> float | None:
+    """Return the exact next candle open, or None if it is not available."""
+    expected_ts = candle_ts + TF_MS[timeframe]
+    next_rows = raw[raw["ts"] == expected_ts]
+    return float(next_rows.iloc[0]["open"]) if not next_rows.empty else None
+
+
 def run_once(cfg: Config, con: sqlite3.Connection, ex) -> dict:
     if cfg.timeframe not in TF_MS:
         raise SystemExit(f"Unsupported timeframe {cfg.timeframe}")
@@ -578,11 +585,10 @@ def run_once(cfg: Config, con: sqlite3.Connection, ex) -> dict:
     # 2) scan every strategy AFTER all exits are booked
     for symbol, raw, data, price, candle_ts in ctx:
         last, prev, n = data.iloc[-1], data.iloc[-2], len(data)
-        fwd = raw[raw["ts"] == candle_ts + tf]
         # Never approximate a next-candle entry with the signal candle's close.
         # If the exchange has not published the next candle yet (or there is a
         # candle gap), wait for the next cycle rather than inventing a fill.
-        next_open = float(fwd.iloc[0]["open"]) if not fwd.empty else None
+        next_open = next_candle_open(raw, candle_ts, cfg.timeframe)
         for name, fn in STRATEGIES.items():
             scan = fn(symbol, last, prev, n)
             busy = con.execute(
