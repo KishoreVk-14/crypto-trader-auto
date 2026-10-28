@@ -45,7 +45,7 @@ class PaperTraderCoreTests(unittest.TestCase):
             if int(last.ts) == ts[264]:
                 signal = pt.Signal("pullback", symbol, int(last.ts), 100.0, 90.0, 120.0,
                                    "test signal", "LONG")
-            return SimpleNamespace(signal=signal, checks=[])
+            return SimpleNamespace(signal=signal, passed=False, checks=[])
 
         con = pt.connect(":memory:")
         try:
@@ -74,7 +74,7 @@ class PaperTraderCoreTests(unittest.TestCase):
             if int(last.ts) == ts[264]:
                 signal = pt.Signal("pullback", symbol, int(last.ts), 100.0, 90.0, 120.0,
                                    "test signal", "LONG")
-            return SimpleNamespace(signal=signal, checks=[])
+            return SimpleNamespace(signal=signal, passed=False, checks=[])
 
         con = pt.connect(":memory:")
         try:
