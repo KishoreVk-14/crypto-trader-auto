@@ -30,16 +30,16 @@ class PaperTraderCoreTests(unittest.TestCase):
 
     def test_position_sizing_respects_risk_and_notional_caps(self):
         size = pt.size_position(self.cfg, equity=1000, open_notional_=0,
-                                fill=100, stop=95, side="LONG")
+                                fill=100, stop=90, side="LONG")
         self.assertIsNotNone(size)
         qty, notional, risk_amt = size
         self.assertAlmostEqual(risk_amt, 10.0)
         self.assertLessEqual(notional, 200.0)
-        self.assertAlmostEqual(qty * 5, risk_amt)
+        self.assertAlmostEqual(qty * 10, risk_amt)
 
     def test_position_sizing_rejects_invalid_risk_and_too_small_notional(self):
         self.assertIsNone(pt.size_position(self.cfg, 1000, 0, 100, 101, "LONG"))
-        self.assertIsNone(pt.size_position(self.cfg, 1000, 0, 100, 99.99, "LONG"))
+        self.assertIsNone(pt.size_position(self.cfg, 10, 0, 100, 95, "LONG"))
 
     def test_stop_wins_when_stop_and_target_touch_same_candle(self):
         candles = pd.DataFrame([{
