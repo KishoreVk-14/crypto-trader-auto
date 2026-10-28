@@ -1,4 +1,5 @@
 import math
+import tempfile
 import unittest
 from types import SimpleNamespace
 
@@ -90,6 +91,45 @@ class PaperTraderCoreTests(unittest.TestCase):
             self.assertEqual(status, "WAITING_NEXT_OPEN")
         finally:
             con.close()
+
+    def test_open_trade_persists_across_restart_and_duplicate_signal_is_ignored(self):
+        signal = pt.Signal(
+            "pullback", "BTC/USDT", 123456, 100.0, 90.0, 120.0,
+            "persistence test", "LONG",
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(__import__("pathlib").Path(tmp) / "paper.db")
+            first = pt.connect(db_path)
+            try:
+                opened = pt.open_position(first, self.cfg, signal, 100.0)
+                self.assertIsNotNone(opened)
+                trade_id = opened["id"]
+                first.commit()
+            finally:
+                first.close()
+
+            # Simulate process restart: reconnect to the same SQLite journal.
+            restarted = pt.connect(db_path)
+            try:
+                persisted = restarted.execute(
+                    "SELECT id, status, entry_price FROM trades WHERE id=?", (trade_id,)
+                ).fetchone()
+                self.assertIsNotNone(persisted)
+                self.assertEqual(persisted["status"], "OPEN")
+                self.assertAlmostEqual(
+                    persisted["entry_price"], 100.0 * (1 + self.cfg.slippage)
+                )
+
+                # Reprocessing the same signal must not create a duplicate trade.
+                duplicate = pt.open_position(restarted, self.cfg, signal, 100.0)
+                count = restarted.execute(
+                    "SELECT COUNT(*) FROM trades WHERE strategy='pullback' AND symbol='BTC/USDT'"
+                ).fetchone()[0]
+                self.assertIsNone(duplicate)
+                self.assertEqual(count, 1)
+            finally:
+                restarted.close()
 
     def test_gap_checks_reject_invalid_long_and_short_entries(self):
         self.assertTrue(pt.gapped("LONG", 94.0, 95.0, 110.0))
