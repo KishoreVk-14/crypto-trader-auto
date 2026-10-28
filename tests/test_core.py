@@ -32,6 +32,65 @@ class PaperTraderCoreTests(unittest.TestCase):
         self.assertIsNone(pt.next_candle_open(raw, 1000 + tf, "4h"))
         self.assertIsNone(pt.next_candle_open(raw.iloc[:1], 1000, "4h"))
 
+    def test_live_cycle_uses_exact_next_candle_open_for_entry(self):
+        tf = pt.TF_MS["4h"]
+        ts = [i * tf for i in range(266)]
+        raw = pd.DataFrame([{
+            "ts": t, "open": 101.0 if i == 265 else 100.0,
+            "high": 102.0, "low": 99.0, "close": 100.0, "volume": 100.0,
+        } for i, t in enumerate(ts)])
+
+        def one_signal(symbol, last, prev, n):
+            signal = None
+            if int(last.ts) == ts[264]:
+                signal = pt.Signal("pullback", symbol, int(last.ts), 100.0, 90.0, 120.0,
+                                   "test signal", "LONG")
+            return SimpleNamespace(signal=signal, checks=[])
+
+        con = pt.connect(":memory:")
+        try:
+            with patch.object(pt, "fetch_candles", return_value=raw), \\
+                 patch.object(pt, "now_ms", return_value=ts[265] + 1), \\
+                 patch.dict(pt.STRATEGIES, {"pullback": one_signal}, clear=True):
+                summary = pt.run_once(self.cfg, con, SimpleNamespace())
+
+            trade = con.execute("SELECT entry_price, entry_ts FROM trades").fetchone()
+            self.assertEqual(summary["opened"], 1)
+            self.assertAlmostEqual(trade["entry_price"], 101.0 * (1 + self.cfg.slippage))
+            self.assertEqual(trade["entry_ts"], ts[265])
+        finally:
+            con.close()
+
+    def test_live_cycle_does_not_fabricate_entry_without_next_candle(self):
+        tf = pt.TF_MS["4h"]
+        ts = [i * tf for i in range(265)]
+        raw = pd.DataFrame([{
+            "ts": t, "open": 100.0, "high": 102.0, "low": 99.0,
+            "close": 100.0, "volume": 100.0,
+        } for t in ts])
+
+        def one_signal(symbol, last, prev, n):
+            signal = None
+            if int(last.ts) == ts[264]:
+                signal = pt.Signal("pullback", symbol, int(last.ts), 100.0, 90.0, 120.0,
+                                   "test signal", "LONG")
+            return SimpleNamespace(signal=signal, checks=[])
+
+        con = pt.connect(":memory:")
+        try:
+            with patch.object(pt, "fetch_candles", return_value=raw), \\
+                 patch.object(pt, "now_ms", return_value=ts[264] + tf), \\
+                 patch.dict(pt.STRATEGIES, {"pullback": one_signal}, clear=True):
+                summary = pt.run_once(self.cfg, con, SimpleNamespace())
+
+            count = con.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
+            status = con.execute("SELECT status FROM scans WHERE strategy='pullback'").fetchone()[0]
+            self.assertEqual(summary["opened"], 0)
+            self.assertEqual(count, 0)
+            self.assertEqual(status, "WAITING_NEXT_OPEN")
+        finally:
+            con.close()
+
     def test_gap_checks_reject_invalid_long_and_short_entries(self):
         self.assertTrue(pt.gapped("LONG", 94.0, 95.0, 110.0))
         self.assertTrue(pt.gapped("LONG", 111.0, 95.0, 110.0))
