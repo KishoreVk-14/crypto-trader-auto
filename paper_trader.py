@@ -866,20 +866,29 @@ def _walk_forward(cfg: Config, frames: dict[str, pd.DataFrame], fold_days: int =
                     # engine currently starts after indicator warmup, but keeping
                     # this boundary explicit protects the report from future
                     # changes to portfolio_backtest's warmup behavior.
+                    # Each fold is simulated from fresh starting equity and
+                    # open positions are force-liquidated at the slice end. Count
+                    # trades opened in the evaluation window, and calculate return
+                    # from the same boundary-adjusted equity curve used for DD.
                     mine = [
                         t for t in trades
                         if t["strategy"] == name
                         and eval_start <= int(t["entry_ts"]) < eval_end
-                        and int(t["exit_ts"]) <= eval_end
                     ]
-                    curve = [value for stamp, value in meta["equity_curves"][name]
-                             if eval_start <= stamp <= eval_end]
+                    curve_points = [
+                        (int(stamp), float(value))
+                        for stamp, value in meta["equity_curves"][name]
+                        if eval_start <= int(stamp) <= eval_end
+                    ]
+                    curve = [value for _, value in curve_points]
                     stats = compute_stats(pd.DataFrame(mine), cfg.start_equity,
                                           mark_to_market_curve=curve)
+                    start_equity = curve[0] if curve else cfg.start_equity
+                    end_equity = curve[-1] if curve else cfg.start_equity
                     pf = stats["profit_factor"]
                     strategies[name] = {
                         "trades": stats["trades"],
-                        "return_pct": stats["return_pct"],
+                        "return_pct": (end_equity / start_equity - 1.0) if start_equity else 0.0,
                         "profit_factor": "inf" if pf == float("inf") else pf,
                         "max_dd": stats["max_dd"],
                         "expectancy_r": stats["expectancy_r"],
