@@ -578,8 +578,11 @@ def run_once(cfg: Config, con: sqlite3.Connection, ex) -> dict:
     # 2) scan every strategy AFTER all exits are booked
     for symbol, raw, data, price, candle_ts in ctx:
         last, prev, n = data.iloc[-1], data.iloc[-2], len(data)
-        fwd = raw[raw["ts"] > candle_ts]
-        next_open = float(fwd.iloc[0]["open"]) if not fwd.empty else price
+        fwd = raw[raw["ts"] == candle_ts + tf]
+        # Never approximate a next-candle entry with the signal candle's close.
+        # If the exchange has not published the next candle yet (or there is a
+        # candle gap), wait for the next cycle rather than inventing a fill.
+        next_open = float(fwd.iloc[0]["open"]) if not fwd.empty else None
         for name, fn in STRATEGIES.items():
             scan = fn(symbol, last, prev, n)
             busy = con.execute(
@@ -589,6 +592,8 @@ def run_once(cfg: Config, con: sqlite3.Connection, ex) -> dict:
                 status = "IN_TRADE"
             elif scan.signal is None:
                 status = "WAITING"
+            elif next_open is None:
+                status = "WAITING_NEXT_OPEN"
             else:
                 summary["signals"] += 1
                 tr = open_position(con, cfg, scan.signal, next_open)
