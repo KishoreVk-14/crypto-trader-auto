@@ -218,5 +218,26 @@ class PaperTraderCoreTests(unittest.TestCase):
         self.assertLess(stats["max_dd"], 0.0)
 
 
+    def test_cost_stress_replays_history_with_higher_fees_and_slippage(self):
+        def fake_backtest(cfg, frames):
+            pnl = 20.0 - 10000.0 * (cfg.fee + cfg.slippage)
+            trades = [{
+                "strategy": "short_pullback", "exit_ts": 1,
+                "pnl": pnl, "r_multiple": pnl / 10.0,
+            }]
+            curves = {name: [(0, 1000.0), (1, 1000.0 + pnl)] for name in pt.STRATEGIES}
+            return trades, {"equity_curves": curves}
+
+        with patch.object(pt, "portfolio_backtest", side_effect=fake_backtest) as replay:
+            result = pt._cost_stress(self.cfg, {"BTC/USDT": pd.DataFrame()})
+
+        self.assertEqual(replay.call_count, 2)
+        self.assertAlmostEqual(result["1.5x_costs"]["fee"], self.cfg.fee * 1.5)
+        self.assertAlmostEqual(result["2x_costs"]["slippage"], self.cfg.slippage * 2)
+        base_return = result["1.5x_costs"]["strategies"]["short_pullback"]["return_pct"]
+        stressed_return = result["2x_costs"]["strategies"]["short_pullback"]["return_pct"]
+        self.assertGreater(base_return, stressed_return)
+
+
 if __name__ == "__main__":
     unittest.main()
