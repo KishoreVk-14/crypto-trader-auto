@@ -28,14 +28,26 @@ class PaperTraderCoreTests(unittest.TestCase):
         self.assertFalse(pt.gapped("LONG", 100.0, 95.0, 110.0))
         self.assertFalse(pt.gapped("SHORT", 100.0, 110.0, 95.0))
 
-    def test_position_sizing_respects_risk_and_notional_caps(self):
+    def test_position_sizing_respects_cost_adjusted_risk_and_notional_caps(self):
         size = pt.size_position(self.cfg, equity=1000, open_notional_=0,
                                 fill=100, stop=90, side="LONG")
         self.assertIsNotNone(size)
         qty, notional, risk_amt = size
-        self.assertAlmostEqual(risk_amt, 10.0)
+        stop_fill = 90 * (1 - self.cfg.slippage)
+        estimated_loss_per_unit = (100 - stop_fill) + 100 * self.cfg.fee + stop_fill * self.cfg.fee
+        self.assertAlmostEqual(risk_amt, qty * estimated_loss_per_unit)
+        self.assertLessEqual(risk_amt, 1000 * self.cfg.risk_pct + 1e-9)
         self.assertLessEqual(notional, 200.0)
-        self.assertAlmostEqual(qty * 10, risk_amt)
+
+    def test_position_sizing_includes_costs_for_short_stops(self):
+        size = pt.size_position(self.cfg, equity=1000, open_notional_=0,
+                                fill=100, stop=110, side="SHORT")
+        self.assertIsNotNone(size)
+        qty, _, risk_amt = size
+        stop_fill = 110 * (1 + self.cfg.slippage)
+        estimated_loss_per_unit = (stop_fill - 100) + 100 * self.cfg.fee + stop_fill * self.cfg.fee
+        self.assertAlmostEqual(risk_amt, qty * estimated_loss_per_unit)
+        self.assertLessEqual(risk_amt, 1000 * self.cfg.risk_pct + 1e-9)
 
     def test_position_sizing_rejects_invalid_risk_and_too_small_notional(self):
         self.assertIsNone(pt.size_position(self.cfg, 1000, 0, 100, 101, "LONG"))
