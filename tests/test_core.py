@@ -260,8 +260,10 @@ class PaperTraderCoreTests(unittest.TestCase):
                 {"strategy": "short_pullback", "entry_ts": first - tf,
                  "exit_ts": first, "pnl": 50.0, "r_multiple": 5.0},
                 # This trade belongs to the evaluation fold.
+                # Deliberately differs from the mocked equity change: fold
+                # return must come from boundary-adjusted equity, not trade P&L.
                 {"strategy": "short_pullback", "entry_ts": first + tf,
-                 "exit_ts": first + 2 * tf, "pnl": 5.0, "r_multiple": 0.5},
+                 "exit_ts": first + 2 * tf, "pnl": 50.0, "r_multiple": 5.0},
                 # A trade outside the fold must not be attributed to it.
                 {"strategy": "short_pullback", "entry_ts": end + tf,
                  "exit_ts": end + 2 * tf, "pnl": 100.0, "r_multiple": 10.0},
