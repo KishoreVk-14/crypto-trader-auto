@@ -52,7 +52,7 @@ class PaperTraderCoreTests(unittest.TestCase):
             with patch.object(pt, "fetch_candles", return_value=raw), \
                  patch.object(pt, "now_ms", return_value=ts[265] + 1), \
                  patch.dict(pt.STRATEGIES, {"pullback": one_signal}, clear=True):
-                summary = pt.run_once(self.cfg, con, SimpleNamespace())
+                summary = pt.run_once(pt.replace(self.cfg, symbols=("BTC/USDT",)), con, SimpleNamespace())
 
             trade = con.execute("SELECT entry_price, entry_ts FROM trades").fetchone()
             self.assertEqual(summary["opened"], 1)
