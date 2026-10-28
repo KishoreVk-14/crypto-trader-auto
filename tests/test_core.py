@@ -52,6 +52,29 @@ class PaperTraderCoreTests(unittest.TestCase):
         self.assertEqual(result["exit_reason"], "STOP")
         self.assertLess(result["exit_price"], 95.0)  # adverse slippage is applied
 
+    def test_target_exits_apply_adverse_slippage_for_long_and_short(self):
+        long_candles = pd.DataFrame([{
+            "ts": 0, "open": 100.0, "high": 111.0, "low": 99.0,
+            "close": 110.0, "ll20": math.nan,
+        }])
+        long_result = pt.simulate_exit(
+            "LONG", 100.0, 90.0, 110.0, 1.0, 0.1, 10.0,
+            long_candles, self.cfg, "pullback",
+        )
+        self.assertEqual(long_result["exit_reason"], "TARGET")
+        self.assertAlmostEqual(long_result["exit_price"], 110.0 * (1 - self.cfg.slippage))
+
+        short_candles = pd.DataFrame([{
+            "ts": 0, "open": 100.0, "high": 101.0, "low": 89.0,
+            "close": 90.0, "ll20": math.nan,
+        }])
+        short_result = pt.simulate_exit(
+            "SHORT", 100.0, 110.0, 90.0, 1.0, 0.1, 10.0,
+            short_candles, self.cfg, "short_pullback",
+        )
+        self.assertEqual(short_result["exit_reason"], "TARGET")
+        self.assertAlmostEqual(short_result["exit_price"], 90.0 * (1 + self.cfg.slippage))
+
     def test_no_exit_before_time_limit_when_bar_does_not_touch_levels(self):
         candles = pd.DataFrame([{
             "ts": 0, "open": 100.0, "high": 102.0, "low": 98.0,
