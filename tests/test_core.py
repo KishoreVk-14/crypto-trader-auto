@@ -23,10 +23,10 @@ class PaperTraderCoreTests(unittest.TestCase):
     def test_gap_checks_reject_invalid_long_and_short_entries(self):
         self.assertTrue(pt.gapped("LONG", 94.0, 95.0, 110.0))
         self.assertTrue(pt.gapped("LONG", 111.0, 95.0, 110.0))
-        self.assertTrue(pt.gapped("SHORT", 111.0, 95.0, 110.0))
-        self.assertTrue(pt.gapped("SHORT", 94.0, 95.0, 110.0))
+        self.assertTrue(pt.gapped("SHORT", 111.0, 110.0, 95.0))
+        self.assertTrue(pt.gapped("SHORT", 94.0, 110.0, 95.0))
         self.assertFalse(pt.gapped("LONG", 100.0, 95.0, 110.0))
-        self.assertFalse(pt.gapped("SHORT", 100.0, 95.0, 110.0))
+        self.assertFalse(pt.gapped("SHORT", 100.0, 110.0, 95.0))
 
     def test_position_sizing_respects_risk_and_notional_caps(self):
         size = pt.size_position(self.cfg, equity=1000, open_notional_=0,
