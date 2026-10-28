@@ -845,7 +845,9 @@ def _walk_forward(cfg: Config, frames: dict[str, pd.DataFrame], fold_days: int =
                 continue
             ts = df["ts"].to_numpy()
             start_idx = max(int(np.searchsorted(ts, fold_start, side="left")) - 210, 0)
-            end_idx = min(int(np.searchsorted(ts, fold_end, side="left")) + 1, len(df))
+            # Exclude the boundary candle so a next-open entry cannot be
+            # counted in both adjacent evaluation folds.
+            end_idx = min(int(np.searchsorted(ts, fold_end, side="left")), len(df))
             chunk = df.iloc[start_idx:end_idx].copy().reset_index(drop=True)
             if len(chunk) >= 260:
                 sliced[symbol] = chunk
