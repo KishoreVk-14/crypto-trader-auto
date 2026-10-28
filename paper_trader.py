@@ -1191,12 +1191,36 @@ def _backtest_html(cfg: Config, bt: dict | None) -> str:
             "<tr><th>Return</th><th>PF</th><th>Max DD</th><th>Return</th><th>PF</th><th>Max DD</th></tr>"
             + "".join(stress_rows) + "</table></div>"
         )
+    walk_html = ""
+    wf = bt.get("walk_forward", {})
+    wf_folds = wf.get("folds", [])
+    if wf_folds:
+        wf_rows = []
+        for index, fold in enumerate(wf_folds, 1):
+            for name, st in fold.get("strategies", {}).items():
+                pf = "inf" if st["profit_factor"] == "inf" else f"{st['profit_factor']:.2f}"
+                wf_rows.append(
+                    f"<tr><td>{index}</td><td>{esc(fold['from'])} – {esc(fold['to'])}</td>"
+                    f"<td class='coin'>{_nice(name)}</td><td>{st['trades']}</td>"
+                    f"<td class='{'up' if st['return_pct'] > 0 else 'down'}'>{st['return_pct']:+.1%}</td>"
+                    f"<td>{pf}</td><td>{st['max_dd']:.1%}</td><td>{st['expectancy_r']:+.3f}R</td></tr>"
+                )
+        walk_html = (
+            f"<h3>Chronological walk-forward check ({wf.get('fold_days', 90)}-day windows)</h3>"
+            "<p class='sub'>Fixed strategy rules are evaluated in successive time windows. Each window uses earlier candles only for indicator warmup. "
+            "Rules are not trained or tuned in this procedure; this is a consistency check, not a guarantee.</p>"
+            "<div class='wrap'><table><tr><th>Fold</th><th>Evaluation window (UTC)</th><th>Strategy</th><th>Trades</th>"
+            "<th>Net return</th><th>PF</th><th>Max DD</th><th>Expectancy</th></tr>"
+            + "".join(wf_rows) + "</table></div>"
+        )
+    else:
+        walk_html = "<h3>Chronological walk-forward check</h3><p class='sub'>Not enough historical data to form evaluation windows.</p>"
     curves = {n: v["curve"] for n, v in bt["strategies"].items()}
     w = bt.get("window", {})
     return f"""<h2>Historical backtest</h2>
 <p class="sub">{esc(bt['exchange'])} &middot; {esc(bt['timeframe'])} &middot; {esc(w.get('from', '-'))} to {esc(w.get('to', '-'))} UTC &middot;
 fees {bt['fee']:.2%} + slippage {bt['slippage']:.2%} per side &middot; run {_t(bt['generated_at'])}. Each strategy has one {sc:,.0f} account shared across all coins.</p>
-{warn}{tbl}{stress_html}<div class="chart" style="margin-top:12px">{_svg_curves(curves, sc)}</div>
+{warn}{tbl}{stress_html}{walk_html}<div class="chart" style="margin-top:12px">{_svg_curves(curves, sc)}</div>
 <details style="margin-top:10px"><summary class="hint">Data coverage by coin</summary><div class="wrap"><table><tr><th>Coin</th><th>Candles</th><th>Complete</th><th>From</th><th>To</th><th>Error</th></tr>{cov}</table></div></details>
 <details><summary class="hint">Latest 100 backtest trades</summary><div class="wrap"><table><tr><th>Strategy</th><th>Coin</th><th>Entered</th><th>Exited</th><th>How it ended</th><th>P&amp;L</th><th>R</th></tr>{trows or "<tr><td colspan='7'>None</td></tr>"}</table></div></details>
 <details><summary class="hint">Assumptions and limits</summary><ul class="notes">{"".join(f"<li>{esc(n)}</li>" for n in bt['notes'])}</ul></details>"""
