@@ -35,4 +35,4 @@ To run a historical backtest, open **Actions → Paper trader validation → Run
 
 ## Current validation scope
 
-The initial workflow checks syntax and CLI startup. It does **not** yet provide comprehensive unit tests or prove the correctness of backtest accounting.
+The workflow currently checks Python compilation, deterministic unit tests, and CLI startup on pushes and pull requests. Tests cover entry-gap checks, cost-aware long/short position sizing, conservative stop-first intrabar exits, adverse target slippage, end-of-data liquidation, mark-to-market drawdown, and modeled buy-and-hold trading costs. The manual 730-day historical backtest is a separate network-dependent step and has not been validated by ordinary CI runs. Passing unit tests checks these specific behaviors; it does not prove the strategy is profitable or that candle-level execution assumptions match live markets.
