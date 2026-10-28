@@ -859,10 +859,21 @@ def _walk_forward(cfg: Config, frames: dict[str, pd.DataFrame], fold_days: int =
             actual_end = int(meta["end"])
             if actual_start < fold_end and actual_end > fold_start:
                 strategies = {}
+                eval_start = max(fold_start, actual_start)
+                eval_end = min(fold_end, actual_end)
                 for name in STRATEGIES:
-                    mine = [t for t in trades if t["strategy"] == name]
+                    # Attribute only trades opened in this evaluation fold. The
+                    # engine currently starts after indicator warmup, but keeping
+                    # this boundary explicit protects the report from future
+                    # changes to portfolio_backtest's warmup behavior.
+                    mine = [
+                        t for t in trades
+                        if t["strategy"] == name
+                        and eval_start <= int(t["entry_ts"]) < eval_end
+                        and int(t["exit_ts"]) <= eval_end
+                    ]
                     curve = [value for stamp, value in meta["equity_curves"][name]
-                             if actual_start <= stamp <= fold_end]
+                             if eval_start <= stamp <= eval_end]
                     stats = compute_stats(pd.DataFrame(mine), cfg.start_equity,
                                           mark_to_market_curve=curve)
                     pf = stats["profit_factor"]
