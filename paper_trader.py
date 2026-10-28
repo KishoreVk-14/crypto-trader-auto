@@ -25,7 +25,7 @@ import sys
 import time
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -821,6 +821,36 @@ def _buy_hold(data: dict, t0: int, t1: int, cfg: Config) -> float:
     return float(np.mean(rets))
 
 
+def _cost_stress(cfg: Config, frames: dict[str, pd.DataFrame], multipliers=(1.5, 2.0)) -> dict:
+    """Re-run the same history with higher fees and slippage; never tune signals on these results."""
+    report = {}
+    for multiplier in multipliers:
+        stressed_cfg = replace(cfg, fee=cfg.fee * multiplier, slippage=cfg.slippage * multiplier)
+        trades, meta = portfolio_backtest(stressed_cfg, frames)
+        if not meta:
+            report[f"{multiplier:g}x_costs"] = {}
+            continue
+        per_strategy = {}
+        for name in STRATEGIES:
+            mine = [trade for trade in trades if trade["strategy"] == name]
+            curve = [value for _, value in meta["equity_curves"][name]]
+            stats = compute_stats(pd.DataFrame(mine), stressed_cfg.start_equity, mark_to_market_curve=curve)
+            pf = stats["profit_factor"]
+            per_strategy[name] = {
+                "trades": stats["trades"],
+                "return_pct": stats["return_pct"],
+                "profit_factor": ("inf" if pf == float("inf") else pf),
+                "max_dd": stats["max_dd"],
+                "expectancy_r": stats["expectancy_r"],
+            }
+        report[f"{multiplier:g}x_costs"] = {
+            "fee": stressed_cfg.fee,
+            "slippage": stressed_cfg.slippage,
+            "strategies": per_strategy,
+        }
+    return report
+
+
 def _clean(st: dict) -> dict:
     out = {}
     for k, v in st.items():
@@ -882,6 +912,8 @@ def run_backtest(cfg: Config, ex) -> dict:
             # rather than a realized-only curve that hides open-position losses.
             res["strategies"][name]["curve"] = [float(value) for _, value in curve_points]
             res["strategies"][name]["trades"] = sorted(mine, key=lambda x: x["exit_ts"], reverse=True)[:100]
+        # Stress-test identical signals/history with harsher execution costs.
+        res["cost_stress"] = _cost_stress(cfg, frames)
     Path(cfg.backtest_path).parent.mkdir(parents=True, exist_ok=True)
     Path(cfg.backtest_path).write_text(json.dumps(res, indent=1, default=float), encoding="utf-8")
     return res
