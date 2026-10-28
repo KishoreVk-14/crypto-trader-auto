@@ -853,7 +853,9 @@ def run_backtest(cfg: Config, ex) -> dict:
                 for k, v in sets.items()
             }
             res["strategies"][name] = {k: _clean(v) for k, v in sts.items()}
-            res["strategies"][name]["curve"] = [float(x) for x in sts["all"]["curve"]]
+            # Plot the same candle-by-candle liquidation equity used for max drawdown,
+            # rather than a realized-only curve that hides open-position losses.
+            res["strategies"][name]["curve"] = [float(value) for _, value in curve_points]
             res["strategies"][name]["trades"] = sorted(mine, key=lambda x: x["exit_ts"], reverse=True)[:100]
     Path(cfg.backtest_path).parent.mkdir(parents=True, exist_ok=True)
     Path(cfg.backtest_path).write_text(json.dumps(res, indent=1, default=float), encoding="utf-8")
