@@ -821,6 +821,65 @@ def _buy_hold(data: dict, t0: int, t1: int, cfg: Config) -> float:
     return float(np.mean(rets))
 
 
+def _walk_forward(cfg: Config, frames: dict[str, pd.DataFrame], fold_days: int = 90) -> dict:
+    """Evaluate fixed strategy rules in chronological, non-overlapping test windows.
+
+    Each fold gets only prior candles for indicator warmup and candles through that
+    fold's end for trading. This is a fixed-rule out-of-sample consistency check,
+    not parameter training or a guarantee of future performance.
+    """
+    usable = [df for df in frames.values() if len(df) >= 260]
+    if not usable:
+        return {"fold_days": fold_days, "folds": []}
+    tf = TF_MS[cfg.timeframe]
+    earliest = max(int(df["ts"].iloc[210]) for df in usable)
+    latest = min(int(df["ts"].iloc[-1]) for df in usable)
+    step = fold_days * 86_400_000
+    folds = []
+    fold_start = earliest
+    while fold_start < latest:
+        fold_end = min(fold_start + step, latest + tf)
+        sliced = {}
+        for symbol, df in frames.items():
+            if len(df) < 260:
+                continue
+            ts = df["ts"].to_numpy()
+            start_idx = max(int(np.searchsorted(ts, fold_start, side="left")) - 210, 0)
+            end_idx = min(int(np.searchsorted(ts, fold_end, side="left")) + 1, len(df))
+            chunk = df.iloc[start_idx:end_idx].copy().reset_index(drop=True)
+            if len(chunk) >= 260:
+                sliced[symbol] = chunk
+        trades, meta = portfolio_backtest(cfg, sliced)
+        if meta:
+            # The portfolio engine begins after the indicator warmup; record its
+            # actual test window so gaps in symbol histories are visible.
+            actual_start = int(meta["trade_from"])
+            actual_end = int(meta["end"])
+            if actual_start < fold_end and actual_end > fold_start:
+                strategies = {}
+                for name in STRATEGIES:
+                    mine = [t for t in trades if t["strategy"] == name]
+                    curve = [value for stamp, value in meta["equity_curves"][name]
+                             if actual_start <= stamp <= fold_end]
+                    stats = compute_stats(pd.DataFrame(mine), cfg.start_equity,
+                                          mark_to_market_curve=curve)
+                    pf = stats["profit_factor"]
+                    strategies[name] = {
+                        "trades": stats["trades"],
+                        "return_pct": stats["return_pct"],
+                        "profit_factor": "inf" if pf == float("inf") else pf,
+                        "max_dd": stats["max_dd"],
+                        "expectancy_r": stats["expectancy_r"],
+                    }
+                folds.append({
+                    "from": fmt_ts(max(fold_start, actual_start)),
+                    "to": fmt_ts(min(fold_end, actual_end)),
+                    "strategies": strategies,
+                })
+        fold_start += step
+    return {"fold_days": fold_days, "folds": folds}
+
+
 def _cost_stress(cfg: Config, frames: dict[str, pd.DataFrame], multipliers=(1.5, 2.0)) -> dict:
     """Re-run the same history with higher fees and slippage; never tune signals on these results."""
     report = {}
@@ -914,6 +973,7 @@ def run_backtest(cfg: Config, ex) -> dict:
             res["strategies"][name]["trades"] = sorted(mine, key=lambda x: x["exit_ts"], reverse=True)[:100]
         # Stress-test identical signals/history with harsher execution costs.
         res["cost_stress"] = _cost_stress(cfg, frames)
+        res["walk_forward"] = _walk_forward(cfg, frames)
     Path(cfg.backtest_path).parent.mkdir(parents=True, exist_ok=True)
     Path(cfg.backtest_path).write_text(json.dumps(res, indent=1, default=float), encoding="utf-8")
     return res
