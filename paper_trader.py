@@ -667,6 +667,24 @@ def _step_open_trade(tr: dict, row, close_ts: int, cfg: Config) -> bool:
     return True
 
 
+def _force_close_at_end(tr: dict, row, close_ts: int, cfg: Config) -> None:
+    """Liquidate a still-open backtest trade at the final available close, with costs."""
+    long = tr["side"] == "LONG"
+    exit_px = float(row.close) * ((1 - cfg.slippage) if long else (1 + cfg.slippage))
+    gross = (exit_px - tr["entry_price"]) * tr["qty"] if long else (tr["entry_price"] - exit_px) * tr["qty"]
+    pnl = gross - tr["entry_fee"] - exit_px * tr["qty"] * cfg.fee
+    tr.update({
+        "exit_ts": close_ts,
+        "exit_price": float(exit_px),
+        "exit_reason": "END_OF_DATA",
+        "pnl": float(pnl),
+        "r_multiple": float(pnl / tr["risk_amt"]) if tr["risk_amt"] > 0 else 0.0,
+        "outcome": "WIN" if pnl > 0 else "LOSS",
+    })
+    for key in ("cur_stop", "init_risk", "fee_buffer", "max_hold", "entry_fee"):
+        tr.pop(key, None)
+
+
 def portfolio_backtest(cfg: Config, frames: dict[str, pd.DataFrame]):
     """Replays history candle-by-candle without look-ahead pre-computation."""
     tf = TF_MS[cfg.timeframe]
@@ -730,6 +748,14 @@ def portfolio_backtest(cfg: Config, frames: dict[str, pd.DataFrame]):
                     "max_hold": cfg.max_bars * 2 if name == "trend" else cfg.max_bars,
                     "bars_held": 0,
                 })
+    # Do not silently omit positions that remain open when the historical data ends.
+    for tr in open_:
+        _, recs, _ = data[tr["symbol"]]
+        final_row = recs[-1]
+        _force_close_at_end(tr, final_row, int(final_row.ts) + tf, cfg)
+        realized[tr["strategy"]] += tr["pnl"]
+        done.append(tr)
+
     return done, {"data": data, "trade_from": trade_from, "end": int(max(d["ts"].iloc[-1] for d, _, _ in data.values())) + tf}
 
 
