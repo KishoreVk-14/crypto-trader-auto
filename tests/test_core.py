@@ -3,6 +3,7 @@ import unittest
 from types import SimpleNamespace
 
 import pandas as pd
+from unittest.mock import patch
 
 import paper_trader as pt
 
@@ -149,6 +150,35 @@ class PaperTraderCoreTests(unittest.TestCase):
         self.assertEqual(short_trade["exit_reason"], "END_OF_DATA")
         self.assertAlmostEqual(short_trade["exit_price"], expected_short_exit)
         self.assertAlmostEqual(short_trade["pnl"], expected_short_pnl)
+
+    def test_mark_to_market_includes_new_entry_costs_immediately(self):
+        tf = pt.TF_MS["4h"]
+        ts = [i * tf for i in range(265)]
+        frame = pd.DataFrame([{
+            "ts": t, "open": 100.0, "high": 101.0, "low": 99.0,
+            "close": 100.0, "volume": 100.0,
+        } for t in ts])
+
+        def one_signal(symbol, last, prev, n):
+            signal = None
+            if int(last.ts) == ts[210]:
+                signal = pt.Signal(
+                    "pullback", symbol, int(last.ts), 100.0, 90.0, 120.0,
+                    "test signal", "LONG",
+                )
+            return SimpleNamespace(signal=signal)
+
+        with patch.dict(pt.STRATEGIES, {"pullback": one_signal}, clear=True):
+            trades, meta = pt.portfolio_backtest(self.cfg, {"BTC/USDT": frame})
+
+        self.assertIsNotNone(meta)
+        curve = meta["equity_curves"]["pullback"]
+        entry_ts = ts[210] + tf
+        point = next(value for stamp, value in curve if stamp == entry_ts)
+        self.assertEqual(trades[0]["entry_ts"], entry_ts)
+        # At entry, mark-to-market should already reflect the entry fee and
+        # estimated costs to liquidate rather than still showing starting equity.
+        self.assertLess(point, self.cfg.start_equity)
 
     def test_buy_hold_benchmark_includes_round_trip_costs(self):
         frame = pd.DataFrame([
