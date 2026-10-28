@@ -239,5 +239,33 @@ class PaperTraderCoreTests(unittest.TestCase):
         self.assertGreater(base_return, stressed_return)
 
 
+
+    def test_walk_forward_creates_chronological_evaluation_folds(self):
+        tf = pt.TF_MS["4h"]
+        ts = [i * tf for i in range(800)]
+        frame = pd.DataFrame([{
+            "ts": t, "open": 100.0, "high": 101.0, "low": 99.0,
+            "close": 100.0, "volume": 100.0,
+        } for t in ts])
+
+        def fake_backtest(cfg, frames):
+            first = int(frames["BTC/USDT"]["ts"].iloc[210])
+            end = int(frames["BTC/USDT"]["ts"].iloc[-1]) + tf
+            curves = {name: [(first, 1000.0), (end, 1005.0)] for name in pt.STRATEGIES}
+            return [], {
+                "trade_from": first,
+                "end": end,
+                "equity_curves": curves,
+            }
+
+        with patch.object(pt, "portfolio_backtest", side_effect=fake_backtest):
+            result = pt._walk_forward(self.cfg, {"BTC/USDT": frame}, fold_days=30)
+
+        self.assertEqual(result["fold_days"], 30)
+        self.assertGreaterEqual(len(result["folds"]), 2)
+        for fold in result["folds"]:
+            self.assertIn("short_pullback", fold["strategies"])
+            self.assertEqual(fold["strategies"]["short_pullback"]["trades"], 0)
+
 if __name__ == "__main__":
     unittest.main()
