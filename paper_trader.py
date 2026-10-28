@@ -799,13 +799,19 @@ def portfolio_backtest(cfg: Config, frames: dict[str, pd.DataFrame]):
     return done, {"data": data, "trade_from": trade_from, "end": end_ts, "equity_curves": equity_curves}
 
 
-def _buy_hold(data: dict, t0: int, t1: int) -> float:
+def _buy_hold(data: dict, t0: int, t1: int, cfg: Config) -> float:
+    """Average fully-invested buy-and-hold return, including modeled round-trip costs."""
     rets = []
     for d, _, _ in data.values():
         ts = d["ts"].to_numpy()
         i0 = min(int(np.searchsorted(ts, t0, side="left")), len(ts) - 1)
         i1 = max(int(np.searchsorted(ts, t1, side="left")) - 1, 0)
-        rets.append(d["close"].iloc[i1] / d["open"].iloc[i0] - 1)
+        entry = float(d["open"].iloc[i0]) * (1 + cfg.slippage)
+        exit_ = float(d["close"].iloc[i1]) * (1 - cfg.slippage)
+        # Initial capital covers both the entry notional and its fee.
+        qty = 1.0 / (entry * (1 + cfg.fee))
+        final_equity = qty * exit_ * (1 - cfg.fee)
+        rets.append(final_equity - 1.0)
     return float(np.mean(rets))
 
 
@@ -844,13 +850,13 @@ def run_backtest(cfg: Config, ex) -> dict:
                f"One shared account per strategy, max {cfg.max_same_side} concurrent same-side trades, +1.2R breakeven ratchet.",
                "Candle data cannot show order-book depth, outages or exact price paths inside a candle.",
                "'Earlier 70%' and 'latest 30%' check consistency across market regimes.",
-               "Buy and hold is fully invested while each strategy risks only a small slice per trade."]}
+               "Buy-and-hold includes modeled entry/exit fees and slippage, but remains fully invested while each strategy risks only a small slice per trade."]}
     if meta:
         t0, t1 = meta["trade_from"], meta["end"]
         split = int(t0 + 0.7 * (t1 - t0))
         res["window"] = {"from": fmt_ts(t0), "to": fmt_ts(t1), "split": fmt_ts(split)}
-        res["benchmark"] = {"all": _buy_hold(meta["data"], t0, t1), "early": _buy_hold(meta["data"], t0, split),
-                            "late": _buy_hold(meta["data"], split, t1)}
+        res["benchmark"] = {"all": _buy_hold(meta["data"], t0, t1, cfg), "early": _buy_hold(meta["data"], t0, split, cfg),
+                            "late": _buy_hold(meta["data"], split, t1, cfg)}
         for name in STRATEGIES:
             mine = [t for t in trades if t["strategy"] == name]
             sets = {"all": mine, "early": [t for t in mine if t["entry_ts"] < split],
