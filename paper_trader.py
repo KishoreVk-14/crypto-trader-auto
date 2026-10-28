@@ -1108,12 +1108,35 @@ def _backtest_html(cfg: Config, bt: dict | None) -> str:
     trs = sorted((dict(t, strategy=n) for n, v in bt["strategies"].items() for t in v["trades"]), key=lambda x: x["exit_ts"], reverse=True)[:100]
     trows = "".join(f"<tr><td>{_nice(t['strategy'])}</td><td class='coin'>{esc(t['symbol'])}</td><td>{_t(t['entry_ts'])}</td><td>{_t(t['exit_ts'])}</td>"
                     f"<td>{t['exit_reason']}</td><td class='{'up' if t['pnl'] > 0 else 'down'}'>{t['pnl']:+.2f}</td><td>{t['r_multiple']:+.2f}R</td></tr>" for t in trs)
+    stress_html = ""
+    stress = bt.get("cost_stress", {})
+    if stress:
+        stress_rows = []
+        for name, values in bt["strategies"].items():
+            cells = [f"<td class='coin'>{_nice(name)}</td>",
+                     f"<td>{values['all']['return_pct']:+.1%}</td>"]
+            for scenario in ("1.5x_costs", "2x_costs"):
+                st = stress.get(scenario, {}).get("strategies", {}).get(name)
+                if st:
+                    pf = "inf" if st["profit_factor"] == "inf" else f"{st['profit_factor']:.2f}"
+                    cells.append(f"<td>{st['return_pct']:+.1%}</td><td>{pf}</td><td>{st['max_dd']:.1%}</td>")
+                else:
+                    cells.extend(["<td>-</td>", "<td>-</td>", "<td>-</td>"])
+            stress_rows.append("<tr>" + "".join(cells) + "</tr>")
+        stress_html = (
+            "<h3>Execution-cost stress test</h3><p class='sub'>Same candles and signals, with fees and slippage multiplied. "
+            "This is a sensitivity check, not a forecast.</p><div class='wrap'><table>"
+            "<tr><th rowspan='2'>Strategy</th><th rowspan='2'>Baseline return</th>"
+            "<th colspan='3'>1.5x costs</th><th colspan='3'>2x costs</th></tr>"
+            "<tr><th>Return</th><th>PF</th><th>Max DD</th><th>Return</th><th>PF</th><th>Max DD</th></tr>"
+            + "".join(stress_rows) + "</table></div>"
+        )
     curves = {n: v["curve"] for n, v in bt["strategies"].items()}
     w = bt.get("window", {})
     return f"""<h2>Historical backtest</h2>
 <p class="sub">{esc(bt['exchange'])} &middot; {esc(bt['timeframe'])} &middot; {esc(w.get('from', '-'))} to {esc(w.get('to', '-'))} UTC &middot;
 fees {bt['fee']:.2%} + slippage {bt['slippage']:.2%} per side &middot; run {_t(bt['generated_at'])}. Each strategy has one {sc:,.0f} account shared across all coins.</p>
-{warn}{tbl}<div class="chart" style="margin-top:12px">{_svg_curves(curves, sc)}</div>
+{warn}{tbl}{stress_html}<div class="chart" style="margin-top:12px">{_svg_curves(curves, sc)}</div>
 <details style="margin-top:10px"><summary class="hint">Data coverage by coin</summary><div class="wrap"><table><tr><th>Coin</th><th>Candles</th><th>Complete</th><th>From</th><th>To</th><th>Error</th></tr>{cov}</table></div></details>
 <details><summary class="hint">Latest 100 backtest trades</summary><div class="wrap"><table><tr><th>Strategy</th><th>Coin</th><th>Entered</th><th>Exited</th><th>How it ended</th><th>P&amp;L</th><th>R</th></tr>{trows or "<tr><td colspan='7'>None</td></tr>"}</table></div></details>
 <details><summary class="hint">Assumptions and limits</summary><ul class="notes">{"".join(f"<li>{esc(n)}</li>" for n in bt['notes'])}</ul></details>"""
