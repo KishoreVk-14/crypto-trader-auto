@@ -248,7 +248,10 @@ class PaperTraderCoreTests(unittest.TestCase):
             "close": 100.0, "volume": 100.0,
         } for t in ts])
 
+        observed_windows = []
+
         def fake_backtest(cfg, frames):
+            observed_windows.append(frames["BTC/USDT"]["ts"].astype(int).tolist())
             first = int(frames["BTC/USDT"]["ts"].iloc[210])
             end = int(frames["BTC/USDT"]["ts"].iloc[-1]) + tf
             curves = {name: [(first, 1000.0), (end, 1005.0)] for name in pt.STRATEGIES}
@@ -261,6 +264,13 @@ class PaperTraderCoreTests(unittest.TestCase):
         with patch.object(pt, "portfolio_backtest", side_effect=fake_backtest):
             result = pt._walk_forward(self.cfg, {"BTC/USDT": frame}, fold_days=30)
 
+        self.assertEqual(len(observed_windows), len(result["folds"]))
+        for i, window in enumerate(observed_windows):
+            # Every fold's source slice ends before the next fold begins;
+            # only prior candles are included for indicator warmup.
+            self.assertEqual(window, sorted(window))
+            if i + 1 < len(observed_windows):
+                self.assertLess(window[-1], observed_windows[i + 1][210])
         self.assertEqual(result["fold_days"], 30)
         self.assertGreaterEqual(len(result["folds"]), 2)
         for fold in result["folds"]:
