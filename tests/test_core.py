@@ -131,6 +131,53 @@ class PaperTraderCoreTests(unittest.TestCase):
             finally:
                 restarted.close()
 
+    def test_restarted_cycle_resumes_exit_management_for_persisted_open_trade(self):
+        tf = pt.TF_MS["4h"]
+        ts = [i * tf for i in range(266)]
+        raw = pd.DataFrame([{
+            "ts": t, "open": 100.0, "high": 101.0,
+            "low": 98.0 if i == 264 else 99.5,
+            "close": 100.0, "volume": 100.0,
+        } for i, t in enumerate(ts)])
+        signal = pt.Signal(
+            "pullback", "BTC/USDT", ts[263], 100.0, 99.0, 120.0,
+            "restart recovery test", "LONG",
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(__import__("pathlib").Path(tmp) / "recovery.db")
+            first = pt.connect(db_path)
+            try:
+                opened = pt.open_position(first, pt.replace(self.cfg, symbols=("BTC/USDT",)), signal, 100.0)
+                self.assertIsNotNone(opened)
+                trade_id = opened["id"]
+                first.commit()
+            finally:
+                first.close()
+
+            # A new process reconnects and must continue managing the persisted position.
+            restarted = pt.connect(db_path)
+            try:
+                def no_signal(symbol, last, prev, n):
+                    return SimpleNamespace(signal=None, passed=False, checks=[])
+
+                with patch.object(pt, "fetch_candles", return_value=raw), \\
+                     patch.object(pt, "now_ms", return_value=ts[266 - 1] + tf), \\
+                     patch.dict(pt.STRATEGIES, {"pullback": no_signal}, clear=True):
+                    summary = pt.run_once(
+                        pt.replace(self.cfg, symbols=("BTC/USDT",)), restarted, SimpleNamespace()
+                    )
+
+                trade = restarted.execute(
+                    "SELECT status, exit_reason, exit_ts FROM trades WHERE id=?", (trade_id,)
+                ).fetchone()
+                self.assertEqual(summary["closed"], 1)
+                self.assertEqual(trade["status"], "CLOSED")
+                self.assertEqual(trade["exit_reason"], "STOP")
+                self.assertEqual(trade["exit_ts"], ts[264] + tf)
+            finally:
+                restarted.close()
+
     def test_gap_checks_reject_invalid_long_and_short_entries(self):
         self.assertTrue(pt.gapped("LONG", 94.0, 95.0, 110.0))
         self.assertTrue(pt.gapped("LONG", 111.0, 95.0, 110.0))
