@@ -63,6 +63,7 @@ class Config:
     risk_pct: float = _env_float("RISK_PCT", 0.01)            # equity risked per trade
     max_pos_pct: float = _env_float("MAX_POS_PCT", 0.20)      # max notional per position
     max_same_side: int = _env_int("MAX_SAME_SIDE", 2)         # max concurrent LONG or SHORT per strategy
+    strategies_enabled: str = os.getenv("STRATEGIES_ENABLED", "all")  # comma-separated names, or all
     fee: float = _env_float("FEE", 0.001)                     # per side (0.1%)
     slippage: float = _env_float("SLIPPAGE", 0.0005)          # per side (0.05%)
     max_bars: int = _env_int("MAX_BARS", 48)                  # base time stop
@@ -317,6 +318,20 @@ STRATEGIES = {
     "short_breakdown": strat_short_breakdown,
     "pullback": strat_pullback,
 }
+def active_strategy_names(cfg: Config) -> tuple[str, ...]:
+    """Return configured strategies; default to all for backward compatibility."""
+    configured = cfg.strategies_enabled.strip().lower()
+    if not configured or configured == "all":
+        return tuple(STRATEGIES)
+    names = tuple(dict.fromkeys(name.strip() for name in configured.split(",") if name.strip()))
+    unknown = sorted(set(names) - set(STRATEGIES))
+    if unknown:
+        raise ValueError(f"Unknown strategy name(s) in STRATEGIES_ENABLED: {', '.join(unknown)}")
+    if not names:
+        raise ValueError("STRATEGIES_ENABLED must be 'all' or a comma-separated strategy list")
+    return names
+
+
 INFO = {
     "regime_switch": "ADAPTIVE: Long breakouts in bull regime, short rallies in bear regime",
     "short_pullback": "SHORT: sells rallies inside a falling downtrend",
@@ -589,7 +604,8 @@ def run_once(cfg: Config, con: sqlite3.Connection, ex) -> dict:
         # If the exchange has not published the next candle yet (or there is a
         # candle gap), wait for the next cycle rather than inventing a fill.
         next_open = next_candle_open(raw, candle_ts, cfg.timeframe)
-        for name, fn in STRATEGIES.items():
+        for name in active_strategy_names(cfg):
+            fn = STRATEGIES[name]
             scan = fn(symbol, last, prev, n)
             busy = con.execute(
                 "SELECT 1 FROM trades WHERE status='OPEN' AND strategy=? AND symbol=?", (name, symbol)
@@ -754,7 +770,8 @@ def portfolio_backtest(cfg: Config, frames: dict[str, pd.DataFrame]):
             i = pos.get(t)
             if i is None or i + 1 >= len(recs):
                 continue
-            for name, fn in STRATEGIES.items():
+            for name in active_strategy_names(cfg):
+                fn = STRATEGIES[name]
                 if any(o["strategy"] == name and o["symbol"] == sym for o in open_):
                     continue
                 sig = fn(sym, recs[i], recs[i - 1], i + 1).signal
