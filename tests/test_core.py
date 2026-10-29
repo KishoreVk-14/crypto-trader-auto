@@ -178,6 +178,85 @@ class PaperTraderCoreTests(unittest.TestCase):
             finally:
                 restarted.close()
 
+    def test_closed_trade_stays_closed_after_restart_and_cycle(self):
+        tf = pt.TF_MS["4h"]
+        signal = pt.Signal(
+            "pullback", "BTC/USDT", 123456, 100.0, 90.0, 120.0,
+            "closed persistence test", "LONG",
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(__import__("pathlib").Path(tmp) / "closed.db")
+            first = pt.connect(db_path)
+            try:
+                opened = pt.open_position(first, self.cfg, signal, 100.0)
+                self.assertIsNotNone(opened)
+                trade_id = opened["id"]
+                pt.close_position(first, opened, {
+                    "exit_ts": signal.signal_ts + tf,
+                    "exit_price": 105.0,
+                    "exit_reason": "TARGET",
+                    "outcome": "WIN",
+                    "pnl": 4.0,
+                    "r_multiple": 0.4,
+                    "bars_held": 1,
+                })
+                first.commit()
+            finally:
+                first.close()
+
+            restarted = pt.connect(db_path)
+            try:
+                trade = restarted.execute(
+                    "SELECT status, exit_reason, pnl FROM trades WHERE id=?", (trade_id,)
+                ).fetchone()
+                self.assertEqual(trade["status"], "CLOSED")
+                self.assertEqual(trade["exit_reason"], "TARGET")
+                self.assertAlmostEqual(trade["pnl"], 4.0)
+
+                # The same signal remains deduplicated after the closed row is reloaded.
+                duplicate = pt.open_position(restarted, self.cfg, signal, 100.0)
+                count = restarted.execute(
+                    "SELECT COUNT(*) FROM trades WHERE strategy='pullback' AND symbol='BTC/USDT'"
+                ).fetchone()[0]
+                self.assertIsNone(duplicate)
+                self.assertEqual(count, 1)
+            finally:
+                restarted.close()
+
+    def test_open_position_respects_same_side_risk_limit_after_restart(self):
+        cfg = pt.replace(self.cfg, max_same_side=1)
+        signal_a = pt.Signal(
+            "pullback", "BTC/USDT", 123456, 100.0, 90.0, 120.0,
+            "risk limit first", "LONG",
+        )
+        signal_b = pt.Signal(
+            "pullback", "ETH/USDT", 123457, 100.0, 90.0, 120.0,
+            "risk limit second", "LONG",
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(__import__("pathlib").Path(tmp) / "risk.db")
+            first = pt.connect(db_path)
+            try:
+                opened = pt.open_position(first, cfg, signal_a, 100.0)
+                self.assertIsNotNone(opened)
+                first.commit()
+            finally:
+                first.close()
+
+            restarted = pt.connect(db_path)
+            try:
+                # A second symbol must not bypass the strategy's same-side cap after restart.
+                blocked = pt.open_position(restarted, cfg, signal_b, 100.0)
+                count = restarted.execute(
+                    "SELECT COUNT(*) FROM trades WHERE strategy='pullback' AND status='OPEN'"
+                ).fetchone()[0]
+                self.assertIsNone(blocked)
+                self.assertEqual(count, 1)
+            finally:
+                restarted.close()
+
     def test_gap_checks_reject_invalid_long_and_short_entries(self):
         self.assertTrue(pt.gapped("LONG", 94.0, 95.0, 110.0))
         self.assertTrue(pt.gapped("LONG", 111.0, 95.0, 110.0))
