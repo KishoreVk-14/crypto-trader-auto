@@ -72,6 +72,54 @@ class PaperTraderCoreTests(unittest.TestCase):
         finally:
             con.close()
 
+    def test_strategy_allowlist_prevents_disabled_strategy_new_entries(self):
+        tf = pt.TF_MS["4h"]
+        ts = [i * tf for i in range(266)]
+        raw = pd.DataFrame([{
+            "ts": t, "open": 100.0, "high": 102.0, "low": 99.0,
+            "close": 100.0, "volume": 100.0,
+        } for t in ts])
+
+        def signal_for(strategy_name):
+            def scan(symbol, last, prev, n):
+                signal = None
+                if int(last.ts) == ts[264]:
+                    signal = pt.Signal(
+                        strategy_name, symbol, int(last.ts), 100.0, 90.0, 120.0,
+                        "allowlist test", "LONG",
+                    )
+                return SimpleNamespace(signal=signal, passed=False, checks=[])
+            return scan
+
+        con = pt.connect(":memory:")
+        try:
+            cfg = pt.replace(
+                self.cfg,
+                symbols=("BTC/USDT",),
+                strategies_enabled="short_pullback",
+            )
+            with (patch.object(pt, "fetch_candles", return_value=raw),
+                  patch.object(pt, "now_ms", return_value=ts[265] + 1),
+                  patch.dict(
+                      pt.STRATEGIES,
+                      {
+                          "pullback": signal_for("pullback"),
+                          "short_pullback": signal_for("short_pullback"),
+                      },
+                      clear=True,
+                  )):
+                summary = pt.run_once(cfg, con, SimpleNamespace())
+
+            rows = con.execute("SELECT strategy FROM trades WHERE status='OPEN'").fetchall()
+            self.assertEqual(summary["opened"], 1)
+            self.assertEqual([row["strategy"] for row in rows], ["short_pullback"])
+            disabled_scan = con.execute(
+                "SELECT COUNT(*) FROM scans WHERE strategy='pullback'"
+            ).fetchone()[0]
+            self.assertEqual(disabled_scan, 0)
+        finally:
+            con.close()
+
     def test_live_cycle_does_not_fabricate_entry_without_next_candle(self):
         tf = pt.TF_MS["4h"]
         ts = [i * tf for i in range(265)]
