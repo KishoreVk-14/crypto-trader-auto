@@ -22,6 +22,16 @@ class PaperTraderCoreTests(unittest.TestCase):
             min_notional=10.0,
         )
 
+    def test_strategy_allowlist_defaults_to_all_and_accepts_one_strategy(self):
+        self.assertEqual(set(pt.active_strategy_names(self.cfg)), set(pt.STRATEGIES))
+        only_short_pullback = pt.replace(self.cfg, strategies_enabled="short_pullback")
+        self.assertEqual(pt.active_strategy_names(only_short_pullback), ("short_pullback",))
+
+    def test_strategy_allowlist_rejects_unknown_names(self):
+        cfg = pt.replace(self.cfg, strategies_enabled="short_pullback,not_a_strategy")
+        with self.assertRaisesRegex(ValueError, "not_a_strategy"):
+            pt.active_strategy_names(cfg)
+
     def test_next_candle_open_requires_exact_next_timestamp(self):
         tf = pt.TF_MS["4h"]
         raw = pd.DataFrame([
