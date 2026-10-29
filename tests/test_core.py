@@ -171,11 +171,21 @@ class PaperTraderCoreTests(unittest.TestCase):
                 def no_signal(symbol, last, prev, n):
                     return SimpleNamespace(signal=None, passed=False, checks=[])
 
+                # The persisted pullback strategy is disabled for new entries, but its
+                # existing position must still be managed after restart.
                 with (patch.object(pt, "fetch_candles", return_value=raw),
                       patch.object(pt, "now_ms", return_value=ts[266 - 1] + tf),
-                      patch.dict(pt.STRATEGIES, {"pullback": no_signal}, clear=True)):
+                      patch.dict(pt.STRATEGIES,
+                                 {"pullback": no_signal, "short_pullback": no_signal},
+                                 clear=True)):
                     summary = pt.run_once(
-                        pt.replace(self.cfg, symbols=("BTC/USDT",)), restarted, SimpleNamespace()
+                        pt.replace(
+                            self.cfg,
+                            symbols=("BTC/USDT",),
+                            strategies_enabled="short_pullback",
+                        ),
+                        restarted,
+                        SimpleNamespace(),
                     )
 
                 trade = restarted.execute(
