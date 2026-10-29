@@ -20,6 +20,28 @@ Commands:
 - `python paper_trader.py loop` — continuously scan after candle closes.
 - `python paper_trader.py report` — rebuild the HTML dashboard from the local journal.
 
+## Selecting strategies for paper trading
+
+By default, all strategies are enabled. To isolate the current leading candidate, set the environment variable before starting the bot:
+
+Linux/macOS:
+```bash
+export STRATEGIES_ENABLED=short_pullback
+python paper_trader.py loop
+```
+
+Windows PowerShell:
+```powershell
+$env:STRATEGIES_ENABLED = "short_pullback"
+python paper_trader.py loop
+```
+
+You can enable multiple strategies with comma-separated names, for example
+`STRATEGIES_ENABLED=short_pullback,regime_switch`. Use `all` to restore the default.
+Unknown strategy names are rejected at startup. This setting controls **new entries only**:
+open paper positions continue to be monitored and exited even if their strategy is later disabled.
+Start with paper trading only and review the journal/report regularly; do not treat the current backtest leader as proven profitable.
+
 ## GitHub Actions
 
 The **Paper trader validation** workflow runs on pushes to `main`, pull requests, and manual dispatch. Automatic runs perform dependency installation, Python compilation, and a CLI smoke check.
