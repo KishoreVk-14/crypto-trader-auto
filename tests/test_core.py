@@ -161,9 +161,9 @@ class PaperTraderCoreTests(unittest.TestCase):
                 def no_signal(symbol, last, prev, n):
                     return SimpleNamespace(signal=None, passed=False, checks=[])
 
-                with patch.object(pt, "fetch_candles", return_value=raw), \\
-                     patch.object(pt, "now_ms", return_value=ts[266 - 1] + tf), \\
-                     patch.dict(pt.STRATEGIES, {"pullback": no_signal}, clear=True):
+                with (patch.object(pt, "fetch_candles", return_value=raw),
+                      patch.object(pt, "now_ms", return_value=ts[266 - 1] + tf),
+                      patch.dict(pt.STRATEGIES, {"pullback": no_signal}, clear=True)):
                     summary = pt.run_once(
                         pt.replace(self.cfg, symbols=("BTC/USDT",)), restarted, SimpleNamespace()
                     )
