@@ -1270,8 +1270,8 @@ def _market_chart_html(con: sqlite3.Connection, cfg: Config, symbol: str) -> str
          f'<line x1="{left}" x2="{w-right}" y1="{cy:.1f}" y2="{cy:.1f}" stroke="#60a5fa" stroke-dasharray="5 4"/>'
          f'<circle cx="{x(len(rows)-1):.1f}" cy="{cy:.1f}" r="4" fill="#60a5fa"/>'
          f'<text x="{w-right-4}" y="{max(13,cy-7):.1f}" text-anchor="end" class="axis">{float(last["close"]):.6g}</text>'
-         f'<text x="{left}" y="{h-8}" class="axis">{_t(rows[0]["ts"])}</text>'
-         f'<text x="{w-right}" y="{h-8}" text-anchor="end" class="axis">{_t(last["ts"])}</text></svg>')
+         f'<text x="{left}" y="{h-8}" class="axis">{esc(fmt_ts(rows[0]["ts"]))} UTC</text>'
+         f'<text x="{w-right}" y="{h-8}" text-anchor="end" class="axis">{esc(fmt_ts(last["ts"]))} UTC</text></svg>')
     return svg+"<div class='chart-legend'><span style='color:#22c55e'>● Up candle</span> <span style='color:#ef4444'>● Down candle</span> <span style='color:#f59e0b'>━ EMA 50</span> <span style='color:#a78bfa'>━ EMA 200</span> <span style='color:#60a5fa'>┄ Latest close</span></div>"
 
 
