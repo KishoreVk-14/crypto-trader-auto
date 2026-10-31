@@ -367,6 +367,12 @@ CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS market_candles (
+    symbol TEXT NOT NULL, timeframe TEXT NOT NULL, ts INTEGER NOT NULL,
+    open REAL NOT NULL, high REAL NOT NULL, low REAL NOT NULL, close REAL NOT NULL, volume REAL NOT NULL,
+    ema50 REAL, ema200 REAL, rsi REAL, adx REAL, atr REAL,
+    PRIMARY KEY (symbol, timeframe, ts)
+);
 """
 
 
@@ -580,6 +586,21 @@ def run_once(cfg: Config, con: sqlite3.Connection, ex) -> dict:
         if len(closed) < 2:
             continue
         data = add_indicators(closed)
+        # Persist a bounded OHLC/indicator window for the interactive decision chart.
+        chart_rows = data.tail(120)
+        con.executemany(
+            """INSERT OR REPLACE INTO market_candles
+               (symbol,timeframe,ts,open,high,low,close,volume,ema50,ema200,rsi,adx,atr)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            [(symbol, cfg.timeframe, int(r.ts), float(r.open), float(r.high), float(r.low),
+              float(r.close), float(r.volume), float(r.ema50), float(r.ema200),
+              float(r.rsi), float(r.adx), float(r.atr)) for r in chart_rows.itertuples(index=False)]
+        )
+        con.execute(
+            "DELETE FROM market_candles WHERE symbol=? AND timeframe=? AND ts NOT IN "
+            "(SELECT ts FROM market_candles WHERE symbol=? AND timeframe=? ORDER BY ts DESC LIMIT 180)",
+            (symbol, cfg.timeframe, symbol, cfg.timeframe),
+        )
         price, candle_ts = float(data.iloc[-1]["close"]), int(data.iloc[-1]["ts"])
         con.execute("INSERT OR IGNORE INTO meta VALUES (?,?)",
                     (f"bh:{symbol}", json.dumps({"ts": candle_ts, "price": price})))
@@ -1127,6 +1148,29 @@ details li em{display:block;color:var(--mut);font-style:normal;font-size:12px;ma
 .log li:first-child{border-top:0}.log time{color:var(--mut);min-width:96px}
 .coin{font-weight:600}.banner{background:var(--soft);border-left:4px solid var(--warn);border-radius:8px;padding:10px 14px;font-size:13px;margin:10px 0}
 .notes{color:var(--mut);font-size:13px}.scan details{border-top:1px solid var(--line);padding:6px 0}.scan .sh{display:flex;justify-content:space-between;margin-bottom:6px}.mut{color:var(--mut)}
+main{max-width:1440px;padding:26px 24px 60px}h1{font-size:28px;letter-spacing:-.03em}
+.nav-tabs{display:flex;gap:8px;flex-wrap:wrap;margin:24px 0 18px;padding:8px;background:var(--card);border:1px solid var(--line);border-radius:14px;position:sticky;top:8px;z-index:5}
+.nav-tabs button,.filter-row button{border:0;background:transparent;color:var(--mut);padding:9px 14px;border-radius:9px;font:600 13px system-ui;cursor:pointer}
+.nav-tabs button.active{background:#263454;color:#fff}.tab-panel{display:none}.tab-panel.active{display:block}
+.analysis-toolbar,.filter-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0}
+.analysis-toolbar select,.filter-row input,.filter-row select{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:9px;padding:9px 12px}
+.market-panel{display:none}.market-panel.active{display:block}
+.analysis-grid{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(320px,1fr);gap:14px;align-items:start}
+.market-chart,.decision-side{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;min-width:0}
+.chart-title{font-size:15px;font-weight:700;margin-bottom:10px}.market-chart svg{width:100%;height:auto}
+.chart-legend{display:flex;gap:12px;flex-wrap:wrap;color:var(--mut);font-size:11px;padding:6px 4px}
+.decision-card{border:1px solid var(--line);border-radius:11px;padding:12px;margin:10px 0;background:var(--bg)}
+.decision-head{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.decision-card p{color:var(--mut);font-size:12px;margin:7px 0}.decision-progress{font-size:11px;color:var(--mut);margin:8px 0 5px}
+.condition-row{display:grid;grid-template-columns:20px minmax(100px,1fr);gap:3px 8px;padding:7px 0;border-top:1px solid var(--line);font-size:12px}
+.condition-mark{font-weight:800}.condition-mark.pass{color:var(--ok)}.condition-mark.fail{color:var(--bad)}
+.condition-row small{grid-column:2;color:var(--mut);font-size:11px}
+.first-blocker{font-size:11px;color:var(--warn);padding:8px;background:var(--soft);border-radius:7px;margin-top:8px}
+.chart-empty{padding:60px 16px;text-align:center;color:var(--mut)}
+.filter-row{justify-content:space-between}.filter-row input{min-width:220px;flex:1;max-width:360px}
+.filter-hidden{display:none!important}
+@media(max-width:900px){.analysis-grid{grid-template-columns:1fr}main{padding:16px 10px 40px}.nav-tabs{position:static}}
+
 """
 
 JS = """
@@ -1134,6 +1178,20 @@ document.querySelectorAll('time[data-ts]').forEach(function(e){var d=new Date(+e
 e.title=e.textContent;e.textContent=d.toLocaleString([],{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})});
 var p=document.getElementById('pill');if(p){var age=Date.now()-(+p.dataset.last),m=Math.round(age/60000);
 if(age>(+p.dataset.max)){p.className='pill warn';p.textContent='No scan for '+(m>=120?Math.round(m/60)+' hours':m+' min')+' - check the bot'}}
+
+document.querySelectorAll('[data-tab]').forEach(function(btn){btn.addEventListener('click',function(){
+ document.querySelectorAll('[data-tab]').forEach(function(b){b.classList.toggle('active',b===btn)});
+ document.querySelectorAll('.tab-panel').forEach(function(p){p.classList.toggle('active',p.id===btn.dataset.tab)});
+})});
+var marketSelect=document.getElementById('market-select');
+function showMarket(){if(!marketSelect)return;document.querySelectorAll('.market-panel').forEach(function(p){p.classList.toggle('active',p.dataset.symbol===marketSelect.value)})}
+if(marketSelect){marketSelect.addEventListener('change',showMarket);showMarket()}
+document.querySelectorAll('[data-table-filter]').forEach(function(input){input.addEventListener('input',function(){
+ var table=document.getElementById(input.dataset.tableFilter);if(!table)return;var q=input.value.toLowerCase();
+ table.querySelectorAll('tbody tr').forEach(function(row){row.classList.toggle('filter-hidden',!row.textContent.toLowerCase().includes(q))})})});
+document.querySelectorAll('[data-status-filter]').forEach(function(select){select.addEventListener('change',function(){
+ var table=document.getElementById(select.dataset.statusFilter);if(!table)return;
+ table.querySelectorAll('tbody tr').forEach(function(row){row.classList.toggle('filter-hidden',select.value!=='ALL'&&!row.textContent.toUpperCase().includes(select.value))})})});
 """
 
 
@@ -1179,6 +1237,74 @@ def _scan_row(name, r) -> str:
         for lbl, ok, det in checks)
     return (f"<details><summary><span class='chip {cls}'>{label}</span> <b>{_nice(name)}</b> "
             f"<span class='mut'>{r['passed']}/{r['total']}</span><small>{esc(why)}</small></summary><ul>{items}</ul></details>")
+
+
+
+def _market_chart_html(con: sqlite3.Connection, cfg: Config, symbol: str) -> str:
+    rows = list(reversed(con.execute(
+        """SELECT * FROM market_candles WHERE symbol=? AND timeframe=?
+           ORDER BY ts DESC LIMIT 90""", (symbol, cfg.timeframe)
+    ).fetchall()))
+    if len(rows) < 2:
+        return "<div class='chart-empty'>Chart history is building. Completed scans will populate this chart.</div>"
+    w,h,left,right,top,bottom=920,330,58,14,18,36
+    lo=min(float(r["low"]) for r in rows); hi=max(float(r["high"]) for r in rows)
+    pad=max((hi-lo)*.08,abs(hi)*.001); lo-=pad; hi+=pad
+    x=lambda i:left+i*(w-left-right)/max(1,len(rows)-1)
+    y=lambda p:top+(hi-p)*(h-top-bottom)/(hi-lo)
+    grid="".join(f'<line x1="{left}" x2="{w-right}" y1="{y(v):.1f}" y2="{y(v):.1f}" class="grid"/>'
+                 f'<text x="{left-7}" y="{y(v)+4:.1f}" text-anchor="end" class="axis">{v:.5g}</text>'
+                 for v in np.linspace(lo,hi,5))
+    sticks=[]
+    for i,r in enumerate(rows):
+        xx=x(i); yo=y(float(r["open"])); yc=y(float(r["close"]))
+        color="#22c55e" if r["close"]>=r["open"] else "#ef4444"
+        sticks.append(f'<line x1="{xx:.1f}" x2="{xx:.1f}" y1="{y(float(r["high"])):.1f}" y2="{y(float(r["low"])):.1f}" stroke="{color}"/>'
+                      f'<rect x="{xx-2.7:.1f}" y="{min(yo,yc):.1f}" width="5.4" height="{max(1.5,abs(yc-yo)):.1f}" fill="{color}"/>')
+    def line(field,color):
+        pts=" ".join(f'{x(i):.1f},{y(float(r[field])):.1f}' for i,r in enumerate(rows) if r[field] is not None)
+        return f'<polyline points="{pts}" fill="none" stroke="{color}" stroke-width="2"/>'
+    last=rows[-1]; cy=y(float(last["close"]))
+    svg=(f'<svg viewBox="0 0 {w} {h}" role="img" aria-label="{esc(symbol)} candlestick chart">{grid}'
+         f'{"".join(sticks)}{line("ema50","#f59e0b")}{line("ema200","#a78bfa")}'
+         f'<line x1="{left}" x2="{w-right}" y1="{cy:.1f}" y2="{cy:.1f}" stroke="#60a5fa" stroke-dasharray="5 4"/>'
+         f'<circle cx="{x(len(rows)-1):.1f}" cy="{cy:.1f}" r="4" fill="#60a5fa"/>'
+         f'<text x="{w-right-4}" y="{max(13,cy-7):.1f}" text-anchor="end" class="axis">{float(last["close"]):.6g}</text>'
+         f'<text x="{left}" y="{h-8}" class="axis">{_t(rows[0]["ts"])}</text>'
+         f'<text x="{w-right}" y="{h-8}" text-anchor="end" class="axis">{_t(last["ts"])}</text></svg>')
+    return svg+"<div class='chart-legend'><span style='color:#22c55e'>● Up candle</span> <span style='color:#ef4444'>● Down candle</span> <span style='color:#f59e0b'>━ EMA 50</span> <span style='color:#a78bfa'>━ EMA 200</span> <span style='color:#60a5fa'>┄ Latest close</span></div>"
+
+
+def _decision_center_html(con: sqlite3.Connection, cfg: Config, scans: dict) -> str:
+    panels=[]
+    for symbol in cfg.symbols:
+        cards=[]
+        for name in active_strategy_names(cfg):
+            r=scans.get((name,symbol))
+            if not r: continue
+            checks=json.loads(r["checks"] or "[]")
+            failed=[c for c in checks if not c[1]]
+            status=r["status"]
+            if status=="IN_TRADE": headline,tone,reason="Position already open","info","The bot is managing this position; it will not stack another entry for this strategy and coin."
+            elif status=="SIGNAL": headline,tone,reason="Entry opened","ok","All technical conditions passed and a next-candle entry was recorded."
+            elif status=="SKIPPED": headline,tone,reason="Signal found, entry rejected","warn","Technical setup passed, but portfolio/risk controls rejected the entry. See Activity for the exact reason."
+            elif status=="WAITING_NEXT_OPEN": headline,tone,reason="Waiting for next candle","warn","Setup passed, but the next candle open was unavailable. The engine will not invent a fill price."
+            elif failed: headline,tone,reason="No entry — conditions not met","bad",f"{len(failed)} of {len(checks)} required conditions are still failing."
+            else: headline,tone,reason="Waiting for confirmation","wait","No complete entry signal was recorded on this candle."
+            checks_html="".join(
+                f"<div class='condition-row'><span class='condition-mark {'pass' if ok else 'fail'}'>{'✓' if ok else '×'}</span><span>{esc(label)}</span><small>{esc(detail)}</small></div>"
+                for label,ok,detail in checks)
+            blocker=f"First blocker: {esc(failed[0][0])} — {esc(failed[0][2])}" if failed else "No failed technical filters."
+            cards.append(f"<article class='decision-card'><div class='decision-head'><b>{_nice(name)}</b><span class='chip {tone}'>{esc(headline)}</span></div>"
+                         f"<p>{esc(reason)}</p><div class='decision-progress'>{r['passed']}/{r['total']} conditions passed</div>"
+                         f"<div class='condition-list'>{checks_html}</div><div class='first-blocker'>{blocker}</div></article>")
+        latest=max((r["ts"] for (n,s),r in scans.items() if s==symbol),default=None)
+        panels.append(f"<section class='market-panel' data-symbol='{esc(symbol)}'><div class='analysis-grid'>"
+                      f"<div class='market-chart'><div class='chart-title'>{esc(symbol)} · {esc(cfg.timeframe)} candles</div>{_market_chart_html(con,cfg,symbol)}</div>"
+                      f"<aside class='decision-side'><div class='chart-title'>Strategy decisions</div><p class='sub'>Latest closed candle · {_t(latest)}</p>"
+                      f"{''.join(cards) or '<div class=empty>No scans yet.</div>'}</aside></div></section>")
+    opts="".join(f"<option value='{esc(s)}'>{esc(s)}</option>" for s in cfg.symbols)
+    return f"<div class='analysis-toolbar'><label>Market <select id='market-select'>{opts}</select></label><span class='mut'>Choose a coin to inspect its candles and every strategy decision.</span></div><div id='market-panels'>{''.join(panels)}</div>"
 
 
 def _f(x) -> float:
@@ -1395,17 +1521,13 @@ def write_report(cfg: Config, con: sqlite3.Connection) -> None:
 <p class="meta">Each strategy starts with {cfg.start_equity:,.0f}, risks {cfg.risk_pct:.0%} per trade, and caps same-side exposure at {cfg.max_same_side} trades. Fees
 {cfg.fee:.2%} and slippage {cfg.slippage:.2%} per side are included. Next scan around {_t(nxt)}.</p>
 
-<h2>Live paper trading</h2><p class="sub">How each strategy is doing so far on live candles.</p><div class="cards">{''.join(cards)}{bench_card}</div>
-<h2>Equity curve</h2><p class="sub">Account value after each closed trade.</p>
-<div class="chart">{_svg_curves({n: s['curve'] for n, s in stats.items()}, cfg.start_equity)}</div>
-
-{bt_html}
-<h2>Why no trade? Live scanner</h2>
-<p class="sub">What each strategy saw on the latest closed candle. Tap a line to see every condition. A trade is only
-taken when all conditions are met.</p>{scanner}
-<h2>Open trades</h2><p class="sub">Positions waiting to hit their stop or target.</p>{open_tbl}
-<h2>Closed trades</h2><p class="sub">Every finished trade, marked win or loss.</p>{closed_tbl}
-<h2>Activity</h2><p class="sub">What the bot did recently.</p>{log_html}
+<nav class="nav-tabs" aria-label="Dashboard sections"><button class="active" data-tab="overview">Overview</button><button data-tab="analysis">Live analysis</button><button data-tab="positions">Open trades</button><button data-tab="history">Trade history</button><button data-tab="research">Strategy lab</button><button data-tab="activity">Activity</button></nav>
+<section class="tab-panel active" id="overview"><h2>Live paper trading</h2><p class="sub">Performance by strategy using closed paper trades.</p><div class="cards">{''.join(cards)}{bench_card}</div><h2>Equity curve</h2><p class="sub">Account value after each closed trade.</p><div class="chart">{_svg_curves({n: s['curve'] for n, s in stats.items()}, cfg.start_equity)}</div></section>
+<section class="tab-panel" id="analysis"><h2>Live market analysis</h2><p class="sub">Candlestick history, EMA overlays, and plain-language reasons behind each strategy decision.</p>{_decision_center_html(con, cfg, scans)}<h2>Condition scanner</h2><p class="sub">Detailed condition checks for every coin and strategy.</p>{scanner}</section>
+<section class="tab-panel" id="positions"><h2>Open trades</h2><p class="sub">Positions currently being managed by the paper engine.</p><div class="filter-row"><input data-table-filter="open-trades-table" placeholder="Search strategy or coin…"><select data-status-filter="open-trades-table"><option value="ALL">All sides</option><option value="LONG">Long</option><option value="SHORT">Short</option></select></div><div id="open-trades-table">{open_tbl}</div></section>
+<section class="tab-panel" id="history"><h2>Closed trade history</h2><p class="sub">Search and filter completed positions.</p><div class="filter-row"><input data-table-filter="closed-trades-table" placeholder="Search closed trades…"><select data-status-filter="closed-trades-table"><option value="ALL">All results</option><option value="WIN">Wins</option><option value="LOSS">Losses</option></select></div><div id="closed-trades-table">{closed_tbl}</div></section>
+<section class="tab-panel" id="research"><h2>Strategy lab</h2><p class="sub">Historical simulations, execution-cost stress tests and walk-forward checks. These are not live results.</p>{bt_html}</section>
+<section class="tab-panel" id="activity"><h2>Activity &amp; system events</h2><p class="sub">Recent scans, entries, exits, skips and errors.</p>{log_html}</section>
 <p class="meta" style="margin-top:24px">Simulated results. Doing well on a small sample does not prove a strategy
 will work with real money. Times are shown in your local time zone.</p>
 </main><script>{JS}</script></body></html>"""
